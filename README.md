@@ -90,20 +90,26 @@ HTML processing and scanned document support may be considered later. They are n
 
 ```text
 researchflow/
+├── backend/
+│   └── README.md
+├── frontend/
+│   └── README.md
 ├── docs/
 │   ├── architecture.md
 │   ├── data-model.md
-│   └── api-contract.md
-├── experiments/
-│   ├── openalex_test.py
-│   └── llm_test.py
+│   ├── api-contract.md
+│   ├── development-workflow.md
+│   └── mock-data/
+│       └── first-slice.json
 ├── .gitignore
 └── README.md
 ```
 
+The local `experiments/` folder is ignored by Git. Formal application tests will be stored inside the frontend or backend and committed.
+
 ## Current Status
 
-The project is in Phase 1: scope, design, and feasibility testing.
+The project is preparing for implementation with separate frontend and backend work.
 
 Completed:
 
@@ -112,10 +118,13 @@ Completed:
 - Initial system architecture
 - Initial data model
 - Initial frontend and backend API contract
+- Full-text PDF feasibility check
+- Two-person development workflow
+- Fixed responses for the first frontend slice
 
-Still needed before implementation:
+Next:
 
-- Align the architecture with full-text PDF processing
-- Update the data model to store documents, sections, text chunks, findings, and evidence
-- Update the API contract for retrieval, parsing, analysis status, and evidence access
-- Test PDF text extraction, section detection, text splitting, and evidence locations
+- Set up the React and FastAPI applications
+- Implement paper search, paper saving, and the saved paper list in parallel
+- Add committed tests for the first backend endpoints
+- Connect the first frontend slice to the real backend

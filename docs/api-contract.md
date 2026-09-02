@@ -8,6 +8,12 @@ Base URL:
 
 The API uses JSON. Timestamps use UTC in ISO 8601 format. Database IDs are integers.
 
+## Contract Change Rules
+
+This file is the shared contract between the frontend and backend. The first development slice uses sections 1 to 3. Its fixed frontend responses are stored in `mock-data/first-slice.json`.
+
+After frontend work starts, a breaking field or status change needs agreement from both developers. Update this contract and the mock data before changing the applications. FastAPI will provide the machine-readable API schema after backend implementation starts.
+
 ## Workflow States
 
 Full-text retrieval, parsing, and analysis use:
@@ -44,7 +50,9 @@ GET /api/papers/search?q={query}&page={page}
 Query parameters:
 
 - `q`: required search text
-- `page`: optional page number, default `1`
+- `page`: optional positive integer, default `1`
+
+The backend trims `q`. An empty value or a page below `1` returns `422 Unprocessable Content`.
 
 Successful response: `200 OK`
 
@@ -72,6 +80,8 @@ Successful response: `200 OK`
 ```
 
 The abstract is discovery metadata. It is not full-text evidence.
+
+If the external paper search fails, the API returns `502 Bad Gateway` with the `paper_search_failed` error code.
 
 ## 2. Save Paper
 
@@ -145,6 +155,8 @@ Successful response: `200 OK`
   ]
 }
 ```
+
+`document_status` is `null` before document processing starts. `latest_analysis_status` is `null` before an analysis exists. The frontend must not treat either value as an empty string.
 
 ## 4. Get Saved Paper
 
@@ -509,6 +521,7 @@ A supported finding must return at least one evidence record. A rejected candida
 | Code | Retryable | Meaning |
 |---|---|---|
 | `paper_already_saved` | No | OpenAlex paper already exists |
+| `paper_search_failed` | Yes | External paper search failed |
 | `full_text_source_not_found` | No | No supported open-access PDF was found |
 | `unsupported_source_url` | No | Source URL is not supported |
 | `pdf_download_failed` | Yes | PDF retrieval failed |

@@ -1,0 +1,90 @@
+{
+  "search_success": {
+    "status": 200,
+    "body": {
+      "papers": [
+        {
+          "openalex_id": "https://openalex.org/W123456789",
+          "title": "Example Open-Access Paper",
+          "authors": [
+            "Author One",
+            "Author Two"
+          ],
+          "publication_year": 2025,
+          "abstract": "Example abstract.",
+          "doi": "https://doi.org/10.xxxx/example",
+          "venue": "Example Journal",
+          "citation_count": 120,
+          "landing_page_url": "https://doi.org/10.xxxx/example"
+        }
+      ],
+      "page": 1,
+      "has_more": false
+    }
+  },
+  "search_empty": {
+    "status": 200,
+    "body": {
+      "papers": [],
+      "page": 1,
+      "has_more": false
+    }
+  },
+  "save_success": {
+    "status": 201,
+    "body": {
+      "id": 1,
+      "openalex_id": "https://openalex.org/W123456789",
+      "title": "Example Open-Access Paper",
+      "authors": [
+        "Author One",
+        "Author Two"
+      ],
+      "publication_year": 2025,
+      "abstract": "Example abstract.",
+      "doi": "https://doi.org/10.xxxx/example",
+      "venue": "Example Journal",
+      "citation_count": 120,
+      "landing_page_url": "https://doi.org/10.xxxx/example",
+      "created_at": "2026-09-02T01:00:00Z",
+      "updated_at": "2026-09-02T01:00:00Z"
+    }
+  },
+  "saved_papers_success": {
+    "status": 200,
+    "body": {
+      "papers": [
+        {
+          "id": 1,
+          "openalex_id": "https://openalex.org/W123456789",
+          "title": "Example Open-Access Paper",
+          "publication_year": 2025,
+          "venue": "Example Journal",
+          "document_status": null,
+          "latest_analysis_status": null
+        }
+      ]
+    }
+  },
+  "paper_already_saved": {
+    "status": 409,
+    "body": {
+      "error": {
+        "code": "paper_already_saved",
+        "message": "This paper is already saved.",
+        "retryable": false
+      }
+    }
+  },
+  "paper_search_failed": {
+    "status": 502,
+    "body": {
+      "error": {
+        "code": "paper_search_failed",
+        "message": "The paper search service is unavailable.",
+        "retryable": true
+      }
+    }
+  }
+}
+
