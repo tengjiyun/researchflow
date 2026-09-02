@@ -520,6 +520,7 @@ A supported finding must return at least one evidence record. A rejected candida
 
 | Code | Retryable | Meaning |
 |---|---|---|
+| `invalid_request` | No | Request parameters failed validation |
 | `paper_already_saved` | No | OpenAlex paper already exists |
 | `paper_search_failed` | Yes | External paper search failed |
 | `full_text_source_not_found` | No | No supported open-access PDF was found |
