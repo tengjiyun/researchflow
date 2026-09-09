@@ -64,4 +64,8 @@ experiments/
 *.sqlite3
 *.pid
 *.seed
+<<<<<<< HEAD
 *.lock
+=======
+*.lock
+>>>>>>> a8d0b8b84f24f7aa913aeada34b194dec8aac469
