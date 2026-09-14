@@ -1,3 +1,5 @@
+import sqlite3
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -30,6 +32,20 @@ def error_body(*, code: str, message: str, retryable: bool) -> dict[str, object]
 
 
 def register_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(sqlite3.OperationalError)
+    async def handle_database_error(
+        request: Request,
+        exc: sqlite3.OperationalError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content=error_body(
+                code="database_unavailable",
+                message="The paper library is temporarily unavailable.",
+                retryable=True,
+            ),
+        )
+
     @app.exception_handler(ApiError)
     async def handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
         return JSONResponse(

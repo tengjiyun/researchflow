@@ -64,8 +64,14 @@ experiments/
 *.sqlite3
 *.pid
 *.seed
-<<<<<<< HEAD
 *.lock
-=======
-*.lock
->>>>>>> a8d0b8b84f24f7aa913aeada34b194dec8aac469
+backend/data/
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm

@@ -132,6 +132,10 @@ Successful response: `201 Created`
 
 If the OpenAlex ID already exists, the API returns `409 Conflict`.
 
+The backend trims the OpenAlex ID and title. The ID must use the full form `https://openalex.org/W123456789`, and the title must not be blank. Citation counts must be non-negative integers. A publication year may be `null` or an integer from 1 to 9999. Invalid fields return `422` with `invalid_request`.
+
+Saving a duplicate does not change the existing record. Successful saves include UTC creation and update timestamps.
+
 ## 3. List Saved Papers
 
 ```http
@@ -157,6 +161,8 @@ Successful response: `200 OK`
 ```
 
 `document_status` is `null` before document processing starts. `latest_analysis_status` is `null` before an analysis exists. The frontend must not treat either value as an empty string.
+
+The list contains all saved papers, ordered by descending internal ID (newest saved first). An empty library returns `{"papers": []}`. Both status fields are currently `null` because document processing is not implemented yet.
 
 ## 4. Get Saved Paper
 
@@ -191,6 +197,8 @@ Successful response: `200 OK`
 }
 ```
 
+A paper with no documents returns `"documents": []`. A missing paper returns `404` with `paper_not_found`.
+
 ## 5. Delete Saved Paper
 
 ```http
@@ -200,6 +208,10 @@ DELETE /api/papers/{paper_id}
 Successful response: `204 No Content`
 
 Deleting a paper also removes its documents, sections, chunks, analyses, findings, evidence, and related cache files.
+
+At the current library stage, only paper records exist, so deletion removes the paper record. The related cleanup above must be implemented when document storage is added. A missing or already deleted paper returns `404` with `paper_not_found`.
+
+Paper IDs for detail and deletion must be positive integers within SQLite's signed 64-bit range. Invalid IDs return `422` with `invalid_request`.
 
 ## 6. Find Full-Text Sources
 
@@ -515,6 +527,7 @@ A supported finding must return at least one evidence record. A rejected candida
 | `409 Conflict` | Resource state does not allow the operation |
 | `422 Unprocessable Content` | Request fields failed validation |
 | `502 Bad Gateway` | An external service failed |
+| `503 Service Unavailable` | The paper library is temporarily unavailable |
 
 ## Error Codes
 
@@ -522,6 +535,8 @@ A supported finding must return at least one evidence record. A rejected candida
 |---|---|---|
 | `invalid_request` | No | Request parameters failed validation |
 | `paper_already_saved` | No | OpenAlex paper already exists |
+| `paper_not_found` | No | Saved paper does not exist |
+| `database_unavailable` | Yes | A library database operation could not finish; retry later |
 | `paper_search_failed` | Yes | External paper search failed |
 | `full_text_source_not_found` | No | No supported open-access PDF was found |
 | `unsupported_source_url` | No | Source URL is not supported |

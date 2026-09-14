@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from functools import lru_cache
 import os
+from pathlib import Path
+
+BACKEND_DIRECTORY = Path(__file__).resolve().parents[2]
 
 
 @dataclass(frozen=True)
@@ -8,6 +11,7 @@ class Settings:
     frontend_origins: tuple[str, ...]
     openalex_api_key: str | None
     openalex_base_url: str
+    database_path: Path
 
 
 @lru_cache
@@ -29,5 +33,7 @@ def get_settings() -> Settings:
             "OPENALEX_BASE_URL",
             "https://api.openalex.org",
         ),
+        database_path=BACKEND_DIRECTORY / Path(
+            os.getenv("DATABASE_PATH") or "data/researchflow.sqlite3"
+        ),
     )
-
