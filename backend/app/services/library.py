@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import json
+import logging
 from pathlib import Path
 import sqlite3
 
@@ -26,8 +27,9 @@ def paper_fields(row: sqlite3.Row) -> dict[str, object]:
 
 
 class PaperLibrary:
-    def __init__(self, database_path: Path) -> None:
+    def __init__(self, database_path: Path, cache_path: Path) -> None:
         self.database_path = database_path
+        self.cache_path = cache_path.resolve()
 
     def save(self, paper: PaperCreate) -> SavedPaper:
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -62,7 +64,12 @@ class PaperLibrary:
     def list_papers(self) -> list[LibraryPaper]:
         with connect_database(self.database_path) as connection:
             rows = connection.execute(
-                "SELECT id, openalex_id, title, publication_year, venue FROM papers ORDER BY id DESC"
+                """SELECT p.id, p.openalex_id, p.title, p.publication_year, p.venue,
+                    (SELECT CASE WHEN d.retrieval_status='failed' OR d.parsing_status='failed' THEN 'failed'
+                        WHEN d.parsing_status='completed' THEN 'completed'
+                        WHEN d.retrieval_status='pending' THEN 'pending' ELSE 'processing' END
+                     FROM documents d WHERE d.paper_id=p.id ORDER BY d.id DESC LIMIT 1) AS document_status
+                    FROM papers p ORDER BY p.id DESC"""
             ).fetchall()
             return [LibraryPaper(**dict(row)) for row in rows]
 
@@ -73,14 +80,46 @@ class PaperLibrary:
             ).fetchone()
             if row is None:
                 raise paper_not_found()
-            return PaperDetail(**paper_fields(row))
+            documents = [dict(document) for document in connection.execute(
+                "SELECT id, retrieval_status, parsing_status FROM documents WHERE paper_id=? ORDER BY id DESC",
+                (paper_id,),
+            )]
+            return PaperDetail(**paper_fields(row), documents=documents)
 
     def delete(self, paper_id: int) -> None:
-        with connect_database(self.database_path) as connection:
-            cursor = connection.execute("DELETE FROM papers WHERE id = ?", (paper_id,))
-            if cursor.rowcount == 0:
-                raise paper_not_found()
+        staged = []
+        try:
+            with connect_database(self.database_path) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                active = connection.execute("""SELECT 1 FROM documents WHERE paper_id=? AND
+                    (retrieval_status IN ('pending', 'processing') OR parsing_status='processing')""", (paper_id,)).fetchone()
+                if active:
+                    raise ApiError(status_code=409, code="invalid_resource_state",
+                                   message="Wait for document processing to finish before deleting the paper.", retryable=True)
+                document_ids = [row[0] for row in connection.execute("SELECT id FROM documents WHERE paper_id=?", (paper_id,))]
+                for document_id in document_ids:
+                    for suffix in (".pdf", ".part"):
+                        original = self.cache_path / f"{document_id}{suffix}"
+                        temporary = original.with_suffix(suffix + ".deleting")
+                        if original.exists():
+                            original.replace(temporary)
+                            staged.append((original, temporary))
+                cursor = connection.execute("DELETE FROM papers WHERE id = ?", (paper_id,))
+                if cursor.rowcount == 0:
+                    raise paper_not_found()
+        except Exception as exc:
+            for original, temporary in reversed(staged):
+                temporary.replace(original)
+            if isinstance(exc, OSError):
+                raise ApiError(status_code=503, code="cache_cleanup_failed",
+                               message="The cached PDF could not be removed. Retry later.", retryable=True) from exc
+            raise
+        for _, temporary in staged:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                logging.getLogger(__name__).warning("Cache cleanup will be retried at startup.")
 
 
 def get_paper_library(request: Request) -> PaperLibrary:
-    return PaperLibrary(request.app.state.database_path)
+    return PaperLibrary(request.app.state.database_path, request.app.state.pdf_cache_path)

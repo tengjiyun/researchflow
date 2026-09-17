@@ -2,9 +2,12 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+import re
 
 from app.core.config import get_settings
 from app.schemas.papers import PaperSearchItem, PaperSearchResponse
+from app.schemas.documents import FullTextSource
+from app.services.pdf_download import DocumentError, validate_source_url
 
 RESULTS_PER_PAGE = 25
 SELECTED_FIELDS = ",".join(
@@ -28,6 +31,36 @@ class OpenAlexSearchError(Exception):
 class OpenAlexService:
     def __init__(self, client: httpx.AsyncClient) -> None:
         self.client = client
+
+    async def full_text_sources(self, openalex_id: str) -> list[FullTextSource]:
+        if not re.fullmatch(r"https://openalex\.org/W[1-9][0-9]*", openalex_id):
+            raise OpenAlexSearchError
+        try:
+            response = await self.client.get(
+                "/works/" + openalex_id.rsplit("/", 1)[-1],
+                params={"select": "id,locations,best_oa_location"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict) or not isinstance(payload.get("locations"), list):
+                raise OpenAlexSearchError
+        except (httpx.HTTPError, ValueError) as exc:
+            raise OpenAlexSearchError from exc
+        sources = []
+        seen = set()
+        for location in [payload.get("best_oa_location"), *payload["locations"]]:
+            if not isinstance(location, dict) or location.get("is_oa") is not True:
+                continue
+            url = location.get("pdf_url")
+            if not isinstance(url, str) or url in seen:
+                continue
+            try:
+                validate_source_url(url)
+            except DocumentError:
+                continue
+            seen.add(url)
+            sources.append(FullTextSource(source_url=url, licence=_optional_str(location.get("license"))))
+        return sources
 
     async def search_papers(self, *, query: str, page: int) -> PaperSearchResponse:
         try:
@@ -149,4 +182,3 @@ def _optional_str(value: Any) -> str | None:
 def _result_count(value: Any) -> int | None:
     count = _mapping_or_empty(value).get("count")
     return _optional_int(count)
-

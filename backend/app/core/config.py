@@ -12,6 +12,7 @@ class Settings:
     openalex_api_key: str | None
     openalex_base_url: str
     database_path: Path
+    pdf_cache_path: Path
 
 
 @lru_cache
@@ -35,5 +36,8 @@ def get_settings() -> Settings:
         ),
         database_path=BACKEND_DIRECTORY / Path(
             os.getenv("DATABASE_PATH") or "data/researchflow.sqlite3"
+        ),
+        pdf_cache_path=BACKEND_DIRECTORY / Path(
+            os.getenv("PDF_CACHE_PATH") or "data/pdfs"
         ),
     )
