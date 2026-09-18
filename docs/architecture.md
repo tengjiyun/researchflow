@@ -47,6 +47,8 @@ The backend provides the REST API and coordinates paper retrieval, parsing, anal
 
 Long-running work must not depend on one HTTP request staying open. The backend records the workflow state so the frontend can request progress updates.
 
+The document workflow now uses a SQLite-backed queue and one local worker. Each document runs in a separate process with a 90-second limit. Run one backend process per database. File locks prevent competing workers. Queued work resumes after a restart; interrupted active work is marked failed for an explicit retry.
+
 ### Paper Search Service
 
 The paper search service uses OpenAlex to retrieve paper metadata, abstracts, and available open-access locations. Search metadata and full-text analysis remain separate. An abstract may help users choose a paper, but it is not accepted as full-text evidence.
@@ -69,11 +71,15 @@ The section detector groups extracted text into sections such as introduction, m
 
 Section detection may fail for unusual paper layouts. In this case, the system keeps the page structure and records that the section is unknown. It must not invent a section name.
 
+The current detector recognises common English headings, including numbered headings. It does not infer sections from visual layout. Every chunk belongs to a section, including unknown sections.
+
 ### Text Splitter
 
 The text splitter divides long sections into smaller chunks. Each chunk keeps its paper, section, page range, sequence number, and source text.
 
 The system does not send the whole paper in one analysis request. Smaller chunks make source limits easier to manage and keep evidence locations clear.
+
+The current splitter stores chunks of at most 2,000 characters without overlap. Each chunk stays within one section and page. Offsets point into separately stored, unchanged page text.
 
 ### Structured Analysis Client
 
@@ -106,6 +112,8 @@ The detailed entities and relationships will be defined in `data-model.md`.
 The local cache stores retrieved PDFs and intermediate parsing results. It also reduces repeated requests to external services.
 
 Cached papers and secret configuration files must not be committed to Git. Cache location, retention, and deletion rules must be set before implementation.
+
+PDFs currently use `backend/data/pdfs/{document_id}.pdf`, with `PDF_CACHE_PATH` available as an override. They remain until the paper is deleted or its document is retried. File cleanup is coordinated with database deletion and recovered on startup after an interruption. The default cache is ignored by Git.
 
 ## Full-Text Processing Flow
 

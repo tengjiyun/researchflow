@@ -109,11 +109,15 @@ The local `experiments/` folder is ignored by Git. Formal application tests will
 
 ## Current Status
 
-The project is preparing for implementation with separate frontend and backend work.
+The backend supports paper discovery, a saved library, and full-text PDF retrieval and parsing. The frontend and backend are developed separately; frontend integration still needs to be checked.
 
 Completed:
 
-- OpenAlex search and abstract retrieval feasibility test
+- OpenAlex search and abstract retrieval
+- SQLite paper saving, listing, details, and deletion
+- Open-access PDF source lookup and bounded downloads
+- Background document processing, status queries, and retries
+- Page text, sections, and source-linked chunks stored in SQLite
 - OpenRouter structured analysis feasibility test using an abstract
 - Initial system architecture
 - Initial data model
@@ -124,7 +128,7 @@ Completed:
 
 Next:
 
-- Set up the React and FastAPI applications
-- Implement paper search, paper saving, and the saved paper list in parallel
-- Add committed tests for the first backend endpoints
-- Connect the first frontend slice to the real backend
+- Connect the frontend library and PDF processing views to the backend
+- Check extraction quality on papers with different layouts
+- Implement structured full-text findings and evidence validation
+- Evaluate accuracy and traceability

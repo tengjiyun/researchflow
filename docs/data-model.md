@@ -4,6 +4,8 @@ The MVP stores one paper's full-text analysis at a time. The model keeps paper m
 
 ## Design Rules
 
+Implemented tables currently cover Paper, Document, DocumentPage, Section, and Chunk. AnalysisRun, Finding, and Evidence remain planned.
+
 - Every supported finding must link to at least one evidence record.
 - Every evidence record must link to stored source text.
 - Full-text results must stay separate from abstract metadata.
@@ -84,6 +86,12 @@ Represents one retrieved full-text version of a paper.
 
 A paper may have more than one document because an open-access location or file version may change. Only a successfully parsed document can start full-text analysis.
 
+The current implementation allows one document per `(paper_id, source_url)` pair. Retry reuses the same document ID and downloads that source again. New source URLs may create another document. Failed processing records remain available for inspection.
+
+## DocumentPage
+
+The `document_pages` table stores each extracted page before section splitting. Its composite primary key is `(document_id, page_number)`. `document_id` references Document, `page_number` starts at 1, and `source_text` contains the unchanged extracted page text. Blank pages have an empty string. Deleting a document removes its pages.
+
 ## Section
 
 Represents a detected section in a parsed document.
@@ -134,6 +142,8 @@ Represents a traceable piece of extracted text used for analysis.
 | created_at | datetime | Not null | Record creation time |
 
 Chunks must keep the original text. Cleaned text may be stored separately later, but it must not replace the source used for evidence.
+
+The current implementation always assigns a section, using `unknown` when needed. Each chunk stays on one page and within one section, with at most 2,000 characters. Character offsets are zero-based and end-exclusive within DocumentPage.source_text. The chunk text must equal that page substring. Section and chunk sequence numbers start at 1. Composite foreign keys keep chunks in the same document as their section and page.
 
 ## AnalysisRun
 
@@ -244,6 +254,8 @@ Some rules, such as requiring evidence for a supported finding, need transaction
 ## Deletion Rules
 
 Deleting a paper removes its documents, sections, chunks, analysis runs, findings, and evidence in one controlled transaction. The related cached PDF and parsing files must also be removed.
+
+Deletion is blocked while any document for the paper is queued or processing. The implemented cascade covers documents, pages, sections, and chunks. Cached PDFs are staged before the database transaction commits; a failed transaction restores them. Startup recovers any interrupted file cleanup. Analysis-related cascades will be added with those tables.
 
 Deleting one analysis run removes only its findings and evidence. It does not delete the paper, document, sections, or chunks.
 
