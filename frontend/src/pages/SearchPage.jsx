@@ -4,7 +4,7 @@
 //   - loading：是否正在加载
 //   - error：错误信息
 //   - hasSearched：是否已经执行过搜索（用于区分初始状态和空结果）
-
+import { searchPapers } from '../api/papers'
 import { useState } from 'react'
 import SearchBar from '../components/SearchBar'
 import PaperList from '../components/PaperList'
@@ -19,19 +19,19 @@ function SearchPage() {
 
   // 当用户提交搜索时由 SearchBar 触发
   const handleSearch = async (query) => {
-    console.log('Search triggered with query:', query)
     setLoading(true)
     setError(null)
     setHasSearched(true)
-
+  
     try {
-      // TODO: 后续替换为真实 API 调用
-      // 现在先模拟一个空结果，确保页面结构能正常渲染
-      // const result = await searchPapers(query, 1)
-      // setPapers(result.papers)
-      setPapers([])
+      const result = await searchPapers(query, 1)
+      setPapers(result.papers)
     } catch (err) {
-      setError('Failed to search papers. Please try again.')
+      // 优先展示后端返回的错误信息
+      const message =
+        err.response?.data?.error?.message ||
+        'Failed to search papers. Please try again.'
+      setError(message)
       setPapers([])
     } finally {
       setLoading(false)
