@@ -13,7 +13,14 @@ function PaperList({ papers }) {
     <div className="paper-list">
       {papers.map((paper) => (
         // 使用 openalex_id 作为 key，保证列表渲染的稳定性
-        <PaperCard key={paper.openalex_id} paper={paper} />
+        <PaperCard
+        key={paper.openalex_id}
+        paper={paper}
+        isSaved={savedIds?.has(paper.openalex_id)}
+        isSaving={savingId === paper.openalex_id}
+        onSave={onSave}
+        
+        />
       ))}
     </div>
   )

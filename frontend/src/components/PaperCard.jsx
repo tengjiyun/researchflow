@@ -40,8 +40,20 @@ function PaperCard({ paper }) {
               View Paper
             </a>
           )}
+        </div>      
+      {/* 新增：保存按钮 */}
+        <div className="paper-card-actions">
+          <button
+            type="button"
+            className="paper-card-save-button"
+            onClick={() => onSave(paper)}
+            disabled={isSaved || isSaving}
+          >
+            {buttonText}
+          </button>
         </div>
       </div>
+
     )
   }
   
