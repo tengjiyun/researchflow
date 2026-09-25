@@ -94,4 +94,48 @@ def initialise_database(path: Path) -> None:
             );
             CREATE INDEX IF NOT EXISTS documents_paper ON documents(paper_id, id);
             CREATE INDEX IF NOT EXISTS chunks_section ON chunks(section_id, sequence_number);
+            CREATE TABLE IF NOT EXISTS analysis_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                status TEXT NOT NULL CHECK (status IN ('pending','processing','completed','failed')),
+                analysis_version TEXT NOT NULL CHECK (analysis_version='full-text-v1'),
+                service_name TEXT NOT NULL,
+                service_model TEXT NOT NULL,
+                settings_json TEXT NOT NULL,
+                error_code TEXT,
+                error_message TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS analysis_active_document ON analysis_runs(document_id)
+                WHERE status IN ('pending','processing');
+            CREATE INDEX IF NOT EXISTS analysis_queue ON analysis_runs(status, id);
+            CREATE TABLE IF NOT EXISTS findings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                analysis_run_id INTEGER NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE,
+                finding_type TEXT NOT NULL CHECK (finding_type IN
+                    ('research_problem','methodology','key_finding','limitation')),
+                content TEXT,
+                support_status TEXT NOT NULL CHECK (support_status IN ('supported','unavailable','rejected')),
+                sequence_number INTEGER NOT NULL CHECK (sequence_number >= 1),
+                created_at TEXT NOT NULL,
+                CHECK ((support_status='supported' AND content IS NOT NULL AND length(trim(content))>0)
+                    OR (support_status='unavailable' AND content IS NULL) OR support_status='rejected'),
+                UNIQUE(analysis_run_id, finding_type, sequence_number)
+            );
+            CREATE TABLE IF NOT EXISTS evidence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                finding_id INTEGER NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+                chunk_id INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+                source_excerpt TEXT NOT NULL CHECK (length(source_excerpt)>0),
+                start_page INTEGER NOT NULL CHECK (start_page >= 1),
+                end_page INTEGER NOT NULL CHECK (end_page=start_page),
+                start_offset INTEGER NOT NULL CHECK (start_offset >= 0),
+                end_offset INTEGER NOT NULL CHECK (end_offset > start_offset),
+                is_primary INTEGER NOT NULL CHECK (is_primary IN (0,1)),
+                created_at TEXT NOT NULL,
+                UNIQUE(finding_id, chunk_id, start_offset, end_offset)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS evidence_primary ON evidence(finding_id) WHERE is_primary=1;
         """)
