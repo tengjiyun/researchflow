@@ -71,7 +71,7 @@ The section detector groups extracted text into sections such as introduction, m
 
 Section detection may fail for unusual paper layouts. In this case, the system keeps the page structure and records that the section is unknown. It must not invent a section name.
 
-The current detector recognises common English headings, including numbered headings. It does not infer sections from visual layout. Every chunk belongs to a section, including unknown sections.
+The detector compares common English headings after normalising spacing and compatibility characters. It keeps source text unchanged. A short numbered title with blank-line boundaries can start an `unknown` section even when its name is not recognised. The following blank line is optional when the two preceding accepted headings and the new title form a consecutive top-level numbering sequence. The original title is retained. This conservative fallback excludes reference sections and rejects common sentence and numeric table patterns. It does not infer sections from fonts or visual layout. Wrapped or unnumbered titles may be missed, and isolated list labels may be mistaken for headings. Every chunk belongs to a section, including unknown sections.
 
 ### Text Splitter
 
@@ -91,7 +91,9 @@ For `full-text-v1`, all stored chunks enter ordered batches, including unknown s
 
 Each batch contains at most 12,000 source characters and keeps whole chunks. A run accepts at most 200,000 source characters and 100 batches. These are application limits, not guarantees about a model's context window. The backend checks them before the first service request. It rejects larger inputs rather than truncating them. A model context error fails the run without reducing its input.
 
-Each request has a 60-second timeout, a maximum output of 4,096 tokens, and a schema allowing at most 20 candidates. The whole run has a 15-minute timeout. Invalid or truncated responses fail the run. The worker makes no automatic repeat requests; users explicitly retry failed runs. These limits bound requests and output size, not the monetary cost. Cost depends on the configured model.
+New runs use a 600-second request timeout, a maximum output of 100,000 tokens, and a schema allowing at most 20 candidates. The output budget covers model reasoning and final JSON; reasoning is not disabled. The whole run has a 30-minute timeout across all batches. Responses also have an 8 MiB byte limit. Invalid, oversized, or truncated responses fail the run. The worker makes no automatic repeat requests; users explicitly retry failed runs. Existing runs and their retries retain their saved token and time limits. These limits bound requests and output size, not monetary cost. Check the configured model's context and output limits before use.
+
+The prompt distinguishes current research questions, methods used, reported results, and explicit limitations. It excludes future plans as current research problems and does not infer limitations from future work alone. Findings must name their subject, retain conditions and comparisons, and avoid broadening a component-specific claim to the whole system. An unclear subject or category should lead to omission. Source matching cannot enforce these semantic instructions, so manual evaluation remains necessary.
 
 The response schema contains a `findings` list. Each candidate contains only `finding_type`, `content` of 1 to 2,000 characters, and one to five `evidence` pairs. Each pair contains a positive integer `chunk_id` and a `source_excerpt` of 1 to 2,000 characters. Whitespace-only content or quotations are invalid. The client checks types, allowed fields, length limits, and the four finding types. Paper text is untrusted input, not an instruction to change the task. The model cannot invoke tools, choose source URLs, or supply database commands.
 
@@ -111,9 +113,9 @@ Paper deletion is blocked while a related analysis is pending or processing. A c
 
 ### Evidence Validator
 
-The validator accepts evidence only from chunks included in the candidate's request batch and belonging to the analysed document. Every non-empty excerpt must match an exact substring of the unchanged chunk text. It does not repair quotations, remove whitespace, or accept paraphrases as quotations. If a quote occurs more than once, its first exact match supplies the offsets.
+The validator accepts evidence only from chunks included in the candidate's request batch and belonging to the analysed document. For matching only, it collapses each run of Unicode whitespace to one space and ignores surrounding quotation whitespace. Every other character must remain unchanged. Each normalised source character maps back to its original character span. The match must be unique within the referenced chunk, including overlapping matches; an exact spelling does not take priority over another whitespace-equivalent occurrence. Paraphrases, punctuation changes, joined hyphenated words, and ligature substitutions are not accepted.
 
-The backend derives the page, section, and zero-based, end-exclusive chunk offsets from stored text. It ignores no invalid evidence: a candidate with any invalid evidence pair is rejected as a whole. It removes duplicate evidence pairs and marks the first remaining pair as primary. Rejected candidates are not stored or exposed in this version.
+The backend derives the page, section, and zero-based, end-exclusive chunk offsets from stored text. It saves the unchanged source substring at those offsets, not the model's whitespace-adjusted quotation. It ignores no invalid evidence: a candidate with any invalid evidence pair is rejected as a whole. It removes duplicate evidence by chunk ID and source offsets and marks the first remaining pair as primary. Rejected candidates are not stored or exposed in this version. Existing completed results are not rewritten.
 
 Before committing results, the backend checks the document and chunks again. Every supported finding needs at least one valid evidence record. A changed or missing source fails the run. The system keeps the finding and evidence as separate records so users can inspect the connection.
 
@@ -210,7 +212,8 @@ The backend verification covers:
 
 - A parsed multi-page document produces findings whose evidence matches the stored text, page, section, and offsets.
 - Every input chunk appears in a request, including the last batch and unknown sections. Input limits fail before any request.
-- Foreign-document IDs, IDs outside the current batch, empty quotes, altered quotes, and missing evidence cannot create supported findings.
+- Foreign-document IDs, IDs outside the current batch, empty quotes, non-whitespace alterations, ambiguous matches, and missing evidence cannot create supported findings.
+- Whitespace-only differences map uniquely to unchanged source text and original offsets, including after storage and application restart.
 - Missing categories contain no invented content. Rejected candidates are hidden, and an all-rejected run fails.
 - Invalid responses, service failures, timeouts, cancellation, and restart never expose partial results. Retry clears failure state and preserves earlier completed runs.
 - Duplicate starts are blocked atomically. Active analysis blocks paper deletion; deletion after completion removes related findings and evidence.

@@ -390,7 +390,7 @@ Each chunk also returns `document_id`, `start_character`, and `end_character`. T
 
 `GET /api/documents/{document_id}/chunks` returns the same `chunks` wrapper for all sections, ordered by document-wide sequence number. It returns `409` before parsing completes. Missing sections return `404` with `section_not_found`.
 
-Sections 12 to 16 describe the implemented analysis endpoints. Starting or retrying analysis needs a configured OpenRouter key and model. Reading existing results does not.
+Sections 12 to 17 describe the implemented analysis endpoints. Starting or retrying analysis needs a configured OpenRouter key and model. Reading existing results and history does not.
 
 ## 12. Start Full-Text Analysis
 
@@ -555,7 +555,50 @@ Missing or non-public findings return `404` with `finding_not_found`. Unavailabl
 
 `start_offset` and `end_offset` are zero-based, end-exclusive character offsets within the stored chunk. The backend derives them, along with the page and section, from the source text. A source excerpt must match that chunk substring exactly. The example assumes the excerpt begins at the start of its chunk. PDF page numbers start at 1; they are not the paper's printed page labels.
 
+The backend may locate a model quotation despite whitespace differences, but only when it has one matching location in the referenced chunk. The returned `source_excerpt` always contains the original source text, including its spacing and line breaks. Non-whitespace changes and ambiguous locations are rejected. This does not change the response fields or existing stored evidence.
+
 The frontend can use the chunk and existing document/section chunk endpoints to show surrounding text. The `supported` label confirms source binding, not semantic correctness. Users must still be able to inspect the quote and judge whether it supports the statement.
+
+## 17. List Analysis History for a Document
+
+```http
+GET /api/documents/{document_id}/analyses?page=1&page_size=20
+```
+
+Successful response: `200 OK`
+
+```json
+{
+  "analyses": [
+    {
+      "id": 40,
+      "document_id": 10,
+      "status": "completed",
+      "analysis_version": "full-text-v1",
+      "service_name": "OpenRouter",
+      "service_model": "configured-model",
+      "error_code": null,
+      "error_message": null,
+      "started_at": "2026-09-02T01:20:02Z",
+      "completed_at": "2026-09-02T01:21:10Z",
+      "created_at": "2026-09-02T01:20:00Z"
+    }
+  ],
+  "page": 1,
+  "page_size": 20,
+  "has_more": false
+}
+```
+
+`page` defaults to 1 and accepts integers from 1 to 2,147,483,647. `page_size` defaults to 20 and accepts integers from 1 to 100. Invalid pagination or document IDs return `422` with `invalid_request`.
+
+The list includes every analysis state for this document, ordered by descending creation ID. Each item has the same public fields as the status endpoint. Retries retain their original ID, creation time, and list position. Internal settings, credentials, and local paths are not exposed.
+
+An existing document with no analyses returns an empty `analyses` list and `has_more: false`, including when parsing is pending or has failed. A page beyond the available results also returns an empty list. A missing document returns `404` with `document_not_found`. The endpoint is read-only and does not require an analysis key or model.
+
+To restore a page after refresh, get document IDs from `GET /api/papers/{paper_id}`, fetch their analysis history, and use the returned IDs with the status and findings endpoints. Resume polling a pending or processing run; select a completed run to show findings. Keep older completed results available when a newer run fails.
+
+`has_more` indicates another page existed when the request was read. Pages are not a snapshot across requests: newly created runs can shift their boundaries. Restart at page 1 after creating a run, and deduplicate by ID when combining pages.
 
 ## Common HTTP Responses
 
@@ -604,7 +647,7 @@ The frontend can use the chunk and existing document/section chunk endpoints to 
 | `finding_not_found` | No | Finding does not exist or is not public |
 | `analysis_input_limit` | No | Full input exceeds the analysis limits |
 | `analysis_invalid_response` | Yes | Service output is invalid, truncated, or does not match the schema |
-| `analysis_timeout` | Yes | A request exceeded 60 seconds or the run exceeded 15 minutes |
+| `analysis_timeout` | Yes | A request or run exceeded its saved timeout (10 minutes per request and 30 minutes per run for new runs) |
 | `analysis_interrupted` | Yes | Active analysis stopped before completion |
 | `analysis_source_changed` | No | Stored input no longer matches the run; start a new analysis |
 | `evidence_missing` | Yes | Candidates were returned but none passed evidence validation |
