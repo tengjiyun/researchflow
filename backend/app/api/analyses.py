@@ -1,8 +1,8 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 
-from app.schemas.analyses import AnalysisCreate, AnalysisStatus, FindingDetail, FindingList, FindingType
+from app.schemas.analyses import AnalysisCreate, AnalysisList, AnalysisStatus, FindingDetail, FindingList, FindingType
 from app.schemas.errors import ErrorResponse
 from app.services.analyses import AnalysisStore, get_analysis_store
 from app.services.analysis_evidence import analysis_error
@@ -28,6 +28,16 @@ def create_analysis(document_id: Identifier, body: AnalysisCreate, request: Requ
 @router.get('/analyses/{analysis_id}', response_model=AnalysisStatus)
 def analysis_status(analysis_id: Identifier, store: Store):
     return store.get(analysis_id)
+
+
+@router.get('/documents/{document_id}/analyses', response_model=AnalysisList)
+def list_analyses(
+    document_id: Identifier,
+    store: Store,
+    page: Annotated[int, Query(ge=1, le=2147483647)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+):
+    return store.list_for_document(document_id, page=page, page_size=page_size)
 
 
 @router.post('/analyses/{analysis_id}/retry', status_code=202, response_model=AnalysisStatus)
