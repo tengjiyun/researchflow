@@ -64,6 +64,8 @@ class DocumentStore:
                 raise not_found()
             if "failed" not in (row["retrieval_status"], row["parsing_status"]):
                 raise invalid_state()
+            if db.execute("SELECT 1 FROM analysis_runs WHERE document_id=?", (document_id,)).fetchone():
+                raise invalid_state()
             self.pdf_path(document_id).unlink(missing_ok=True)
             self.pdf_path(document_id).with_suffix(".part").unlink(missing_ok=True)
             db.execute("DELETE FROM sections WHERE document_id = ?", (document_id,))

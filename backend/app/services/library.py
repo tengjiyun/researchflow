@@ -68,7 +68,9 @@ class PaperLibrary:
                     (SELECT CASE WHEN d.retrieval_status='failed' OR d.parsing_status='failed' THEN 'failed'
                         WHEN d.parsing_status='completed' THEN 'completed'
                         WHEN d.retrieval_status='pending' THEN 'pending' ELSE 'processing' END
-                     FROM documents d WHERE d.paper_id=p.id ORDER BY d.id DESC LIMIT 1) AS document_status
+                     FROM documents d WHERE d.paper_id=p.id ORDER BY d.id DESC LIMIT 1) AS document_status,
+                    (SELECT a.status FROM analysis_runs a JOIN documents d ON d.id=a.document_id
+                     WHERE d.paper_id=p.id ORDER BY a.id DESC LIMIT 1) AS latest_analysis_status
                     FROM papers p ORDER BY p.id DESC"""
             ).fetchall()
             return [LibraryPaper(**dict(row)) for row in rows]
@@ -96,6 +98,12 @@ class PaperLibrary:
                 if active:
                     raise ApiError(status_code=409, code="invalid_resource_state",
                                    message="Wait for document processing to finish before deleting the paper.", retryable=True)
+                active_analysis = connection.execute("""SELECT 1 FROM analysis_runs a
+                    JOIN documents d ON d.id=a.document_id WHERE d.paper_id=?
+                    AND a.status IN ('pending','processing')""", (paper_id,)).fetchone()
+                if active_analysis:
+                    raise ApiError(status_code=409, code="invalid_resource_state",
+                                   message="Wait for analysis to finish before deleting the paper.", retryable=True)
                 document_ids = [row[0] for row in connection.execute("SELECT id FROM documents WHERE paper_id=?", (paper_id,))]
                 for document_id in document_ids:
                     for suffix in (".pdf", ".part"):
