@@ -12,7 +12,7 @@ GET  /api/papers/{paper_id}
 DELETE /api/papers/{paper_id}
 ```
 
-PDF retrieval and parsing are available. Structured analysis is the next backend stage.
+PDF retrieval, parsing, structured full-text analysis, and source evidence queries are available.
 
 Existing tests in `tests/` cover paper search. Local feasibility work stays in the ignored root `experiments/` folder.
 
@@ -65,9 +65,9 @@ Send a search result to `POST /api/papers` to save it. The response returns the 
 
 `GET /api/papers` returns the library with the newest saved records first. `GET /api/papers/{paper_id}` returns one paper's metadata. `DELETE /api/papers/{paper_id}` removes that record and returns `204` with no body. A missing record returns `404` with `paper_not_found`.
 
-The library reports the latest document's processing state. It returns `null` when no document exists. Paper details include document IDs and their retrieval and parsing states. Analysis status remains `null` because structured analysis is not implemented yet.
+The library reports the latest document's processing state. It returns `null` when no document exists. Paper details include document IDs and their retrieval and parsing states. `latest_analysis_status` reports the newest analysis across the paper's documents, or `null` when no run exists. Earlier completed analyses remain available.
 
-Deleting a paper removes its documents, stored pages, sections, chunks, and cached files. Deletion returns `409` while a document is queued or processing. Cache files are staged before database deletion and restored if the transaction fails. Interrupted cache cleanup is recovered at startup.
+Deleting a paper removes its documents, stored pages, sections, chunks, analyses, findings, evidence, and cached files. Deletion returns `409` while a document or analysis is queued or processing. Cache files are staged before database deletion and restored if the transaction fails. Interrupted cache cleanup is recovered at startup.
 
 The database enables foreign key checks on each connection. Writes use transactions, and the unique OpenAlex ID prevents concurrent requests from saving duplicates. A database operation that remains blocked after five seconds returns `503` with `database_unavailable`. The client can retry later.
 
@@ -101,4 +101,30 @@ Text chunks contain at most 2,000 characters and never cross a page or section b
 
 Cached PDFs use `data/pdfs/{document_id}.pdf`. Set `PDF_CACHE_PATH` to change the cache folder; relative paths use the backend directory. Keep custom caches outside version control. Files remain until their paper is deleted or the document is retried. Temporary downloads use `.part`; interrupted deletion uses `.deleting`. Paths and checksums are internal and are not returned by the API.
 
-Startup adds `documents`, `document_pages`, `sections`, and `chunks` without replacing existing paper records. Analysis tables are not created at this stage.
+Startup adds the document tables and `analysis_runs`, `findings`, and `evidence` without replacing existing paper records or extracted text. A document with analysis history cannot be retried to replace its source. A different PDF version needs a different document record.
+
+## Full-Text Analysis
+
+```text
+POST /api/documents/{document_id}/analyses
+GET  /api/analyses/{analysis_id}
+POST /api/analyses/{analysis_id}/retry
+GET  /api/analyses/{analysis_id}/findings
+GET  /api/findings/{finding_id}
+```
+
+Set `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` in the backend process environment before starting the server. The model must support structured JSON-schema output. No model is selected automatically. The app does not load `.env` files itself. Missing configuration returns `503` with `analysis_not_configured`; search, saving, and PDF processing still work without these settings. Keep keys out of source files, requests from the frontend, and Git.
+
+The client uses OpenRouter's [structured output format](https://openrouter.ai/docs/guides/features/structured-outputs), requests compatible provider routing, and validates the response locally. Unsupported models fail instead of falling back to another model or unstructured text. Extracted paper text is sent to OpenRouter and the selected provider. Each run and explicit retry can incur charges.
+
+After a document finishes parsing, post `{"analysis_version":"full-text-v1"}` to its analysis endpoint. An empty object uses the same version. The response returns `202` and an analysis ID. Poll the status endpoint until it returns `completed` or `failed`, then fetch findings. Only one pending or processing analysis is allowed per document; a duplicate start returns `409`.
+
+Findings use four categories: `research_problem`, `methodology`, `key_finding`, and `limitation`. Use `?finding_type=methodology` to filter the list. A missing category contains an `unavailable` row with null content and no evidence. This means the run found no validated result, not that the paper certainly lacks that information.
+
+Open a finding to inspect its source excerpts, chunk IDs, sections, PDF pages, and character offsets. Offsets are zero-based and end-exclusive within the chunk. Quotes must exactly match stored text; the backend derives locations rather than trusting model-generated page numbers. `supported` confirms a source link, not that the excerpt logically proves the statement. Check the quote and surrounding text yourself.
+
+All extracted chunks enter ordered batches of at most 12,000 characters. A run accepts at most 200,000 source characters and 100 batches. Larger inputs fail before queueing; they are not truncated. Each request has a 60-second timeout and a 4,096-token output limit. The run has a 15-minute timeout. Every response allows up to 20 candidates, each with one to five exact quotes. Context-limit errors, truncated output, invalid responses, and service failures fail the run without publishing partial results. Parsed content missing from figures, tables, or scanned pages cannot be analysed by this text-only workflow.
+
+The SQLite queue has one analysis worker alongside the document worker. Keep one backend process per database. Pending runs survive restart; interrupted active runs become failed. Retry reuses a failed run's ID, original model, settings, and creation time and processes all batches again. Changing models needs a new run. Completed runs are not overwritten. There are no automatic repeat service requests.
+
+The implementation was checked with isolated databases, a previous-schema upgrade, API requests, and simulated provider responses. Live model compatibility, output quality, cost, and latency still need evaluation with configured credentials and a small paper sample. No live model result is implied by these checks.

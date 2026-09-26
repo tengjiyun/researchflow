@@ -390,7 +390,7 @@ Each chunk also returns `document_id`, `start_character`, and `end_character`. T
 
 `GET /api/documents/{document_id}/chunks` returns the same `chunks` wrapper for all sections, ordered by document-wide sequence number. It returns `409` before parsing completes. Missing sections return `404` with `section_not_found`.
 
-Sections 12 to 16 below describe the next analysis stage and are not implemented yet.
+Sections 12 to 16 describe the implemented analysis endpoints. Starting or retrying analysis needs a configured OpenRouter key and model. Reading existing results does not.
 
 ## 12. Start Full-Text Analysis
 
@@ -422,6 +422,12 @@ Accepted response: `202 Accepted`
 
 Analysis can start only after document parsing is complete. Otherwise, the API returns `409 Conflict`.
 
+`analysis_version` defaults to `full-text-v1`; other versions and unknown request fields return `422` with `invalid_request`. A missing document returns `404` with `document_not_found`. A parsed document without chunks returns `409` with `invalid_resource_state`.
+
+Only one pending or processing run is allowed per document. A duplicate start returns `409` with `invalid_resource_state`, without creating another run or making another service request. A new run after completion keeps the previous results. Missing `OPENROUTER_API_KEY` or `OPENROUTER_MODEL` returns `503` with `analysis_not_configured` before queueing.
+
+The backend checks the limits in `architecture.md` before queueing: at most 200,000 source characters and 100 whole-chunk batches, each containing at most 12,000 source characters. Exceeding a limit returns `422` with `analysis_input_limit`; it never queues a truncated input. Accepted work runs in the background. `202` confirms queue acceptance, not successful analysis.
+
 ## 13. Get Analysis Status
 
 ```http
@@ -441,9 +447,14 @@ Successful response: `200 OK`
   "error_code": null,
   "error_message": null,
   "started_at": "2026-09-02T01:20:02Z",
-  "completed_at": "2026-09-02T01:21:10Z"
+  "completed_at": "2026-09-02T01:21:10Z",
+  "created_at": "2026-09-02T01:20:00Z"
 }
 ```
+
+Status responses also include `created_at`. Pending timestamps are null, processing sets `started_at`, and completion sets `completed_at`. Failures set `error_code` and `error_message` and leave `completed_at` null. A missing analysis returns `404` with `analysis_not_found`. Status responses do not expose service keys, local paths, raw provider responses, or internal settings.
+
+The library's `latest_analysis_status` field reports the most recently created analysis across the paper's documents, or null when no run exists. It does not mean that earlier completed results have been replaced.
 
 ## 14. Retry Failed Analysis
 
@@ -452,6 +463,8 @@ POST /api/analyses/{analysis_id}/retry
 ```
 
 This endpoint is valid only when the analysis has failed.
+
+Retry uses the same run ID, original model, settings, and creation time. It clears errors and processing timestamps and processes the full input again. Changing models needs a new run. Missing configuration returns `503`; a missing run returns `404`. A non-failed run or another active run for the document returns `409` with `invalid_resource_state`. Source changes return `409` with `analysis_source_changed` and need a new analysis. Retrying may incur another service charge.
 
 Accepted response: `202 Accepted`
 
@@ -499,6 +512,10 @@ Successful response: `200 OK`
 
 Only completed analyses expose supported findings. Unavailable categories may return a finding with `content` set to `null` and `support_status` set to `unavailable`.
 
+Pending, processing, or failed runs return `409` with `invalid_resource_state`, not partial results. Missing runs return `404` with `analysis_not_found`. An invalid `finding_type` returns `422` with `invalid_request`.
+
+Every completed run represents all four categories. A category without a validated finding contains exactly one unavailable row with null content and `evidence_count: 0`. Unavailable means no validated result was found, not that the paper certainly lacks that information. Results are ordered by the category order above and then by `sequence_number`. Filtering keeps this order. Rejected candidates are never returned.
+
 ## 16. Get Finding and Evidence
 
 ```http
@@ -524,6 +541,8 @@ Successful response: `200 OK`
       "source_excerpt": "Participants were assigned to two groups under controlled conditions.",
       "start_page": 5,
       "end_page": 5,
+      "start_offset": 0,
+      "end_offset": 69,
       "is_primary": true
     }
   ]
@@ -531,6 +550,12 @@ Successful response: `200 OK`
 ```
 
 A supported finding must return at least one evidence record. A rejected candidate is not returned by this public endpoint.
+
+Missing or non-public findings return `404` with `finding_not_found`. Unavailable findings return null content and an empty `evidence` list. Evidence is ordered with the primary record first, then by ID.
+
+`start_offset` and `end_offset` are zero-based, end-exclusive character offsets within the stored chunk. The backend derives them, along with the page and section, from the source text. A source excerpt must match that chunk substring exactly. The example assumes the excerpt begins at the start of its chunk. PDF page numbers start at 1; they are not the paper's printed page labels.
+
+The frontend can use the chunk and existing document/section chunk endpoints to show surrounding text. The `supported` label confirms source binding, not semantic correctness. Users must still be able to inspect the quote and judge whether it supports the statement.
 
 ## Common HTTP Responses
 
@@ -574,10 +599,20 @@ A supported finding must return at least one evidence record. A rejected candida
 | `processing_failed` | Yes | The document worker could not finish |
 | `cache_cleanup_failed` | Yes | A cached file could not be removed |
 | `analysis_failed` | Yes | External analysis failed |
-| `evidence_missing` | No | A candidate finding has no source evidence |
+| `analysis_not_configured` | No | A service key or explicit model is missing; configure before retrying |
+| `analysis_not_found` | No | Analysis run does not exist |
+| `finding_not_found` | No | Finding does not exist or is not public |
+| `analysis_input_limit` | No | Full input exceeds the analysis limits |
+| `analysis_invalid_response` | Yes | Service output is invalid, truncated, or does not match the schema |
+| `analysis_timeout` | Yes | A request exceeded 60 seconds or the run exceeded 15 minutes |
+| `analysis_interrupted` | Yes | Active analysis stopped before completion |
+| `analysis_source_changed` | No | Stored input no longer matches the run; start a new analysis |
+| `evidence_missing` | Yes | Candidates were returned but none passed evidence validation |
 | `invalid_resource_state` | No | Operation is not valid for the current state |
 
-The retryability column describes whether another attempt may help. Document status objects store `error_code` and `error_message`; the shared HTTP error object also includes `retryable`. Deletion blocked by active processing is the retryable exception to `invalid_resource_state`.
+The retryability column describes whether another attempt may help, not whether retry is automatic or free. Document and analysis status objects store `error_code` and `error_message`; the shared HTTP error object also includes `retryable`. Deletion blocked by active processing is the retryable exception to `invalid_resource_state`.
+
+Errors encountered after analysis is accepted appear in its status, not as a later HTTP response to the start request. The worker stops at the failed batch, publishes no partial findings, and makes no automatic repeat requests. If some candidates pass evidence checks, rejected candidates are discarded. If all candidates fail those checks, the run fails with `evidence_missing`. Valid empty responses from every batch instead produce four unavailable categories.
 
 ## MVP Access Boundary
 

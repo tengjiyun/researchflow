@@ -83,15 +83,41 @@ The current splitter stores chunks of at most 2,000 characters without overlap. 
 
 ### Structured Analysis Client
 
-The analysis client sends selected chunks to the OpenRouter API. It requests structured findings for the research problem, methodology, key findings, and limitations.
+The analysis client, analysis worker, and evidence validator are implemented. The related API and storage contracts are in `api-contract.md` and `data-model.md`. Live model output quality remains an evaluation task.
 
-Missing information is recorded as unavailable. The service must not fill missing fields with unsupported assumptions.
+The client sends stored chunks to OpenRouter and requests four finding types: `research_problem`, `methodology`, `key_finding`, and `limitation`. It uses `OPENROUTER_API_KEY` and an explicitly configured `OPENROUTER_MODEL`. There is no default paid model and no automatic model fallback. Missing configuration prevents a run from being queued.
+
+For `full-text-v1`, all stored chunks enter ordered batches, including unknown sections. The client does not replace full text with search metadata or silently omit later pages. References and quoted studies may provide context, but the prompt must not describe their claims as findings of the current paper. Text that the PDF parser cannot extract, including some figures and tables, remains outside the analysis input.
+
+Each batch contains at most 12,000 source characters and keeps whole chunks. A run accepts at most 200,000 source characters and 100 batches. These are application limits, not guarantees about a model's context window. The backend checks them before the first service request. It rejects larger inputs rather than truncating them. A model context error fails the run without reducing its input.
+
+Each request has a 60-second timeout, a maximum output of 4,096 tokens, and a schema allowing at most 20 candidates. The whole run has a 15-minute timeout. Invalid or truncated responses fail the run. The worker makes no automatic repeat requests; users explicitly retry failed runs. These limits bound requests and output size, not the monetary cost. Cost depends on the configured model.
+
+The response schema contains a `findings` list. Each candidate contains only `finding_type`, `content` of 1 to 2,000 characters, and one to five `evidence` pairs. Each pair contains a positive integer `chunk_id` and a `source_excerpt` of 1 to 2,000 characters. Whitespace-only content or quotations are invalid. The client checks types, allowed fields, length limits, and the four finding types. Paper text is untrusted input, not an instruction to change the task. The model cannot invoke tools, choose source URLs, or supply database commands.
+
+The worker combines validated candidates in batch order without a second free-text summary request. It removes exact duplicates of type, content, and evidence, but does not merge statements based on an assumed similarity. Missing categories receive one `unavailable` record with no replacement statement. This means the run found no validated finding in that category, not that the paper certainly contains none.
+
+### Analysis Worker
+
+The worker uses a persistent SQLite queue within the existing single-process backend. No separate queue server is needed. It claims one analysis at a time in a short transaction, then releases the database connection before external requests. The existing process lock prevents two backend instances from recovering or claiming the same work.
+
+Only parsed documents with stored chunks can enter the queue. One document may have only one pending or processing analysis. Completed runs remain available when a user starts a new run. Each run records its selected model, analysis version, file checksum, ordered chunk IDs, a digest of the ordered chunk IDs and text, and non-secret request settings.
+
+Validated findings remain private until all batches finish. One transaction writes the findings and evidence and marks the run completed. A request, validation, timeout, or storage failure leaves no public partial result. If every candidate fails its evidence check, the run fails with `evidence_missing`. If every valid service response contains an empty list, the run may complete with four unavailable categories.
+
+Queued work survives a restart. Active work interrupted by shutdown or restart becomes failed and needs an explicit retry. Retry reuses the failed run ID and its original model and settings, clears old errors and timestamps, and processes all batches again. It uses the current environment key. Changing models needs a new run. The worker never holds a write transaction while waiting for OpenRouter.
+
+Paper deletion is blocked while a related analysis is pending or processing. A completed document's source pages and chunks must not be replaced while analysis history refers to them. A different PDF version needs another document record.
 
 ### Evidence Validator
 
-The evidence validator checks that every finding has at least one source excerpt. The excerpt must point to a stored chunk, section, and page range.
+The validator accepts evidence only from chunks included in the candidate's request batch and belonging to the analysed document. Every non-empty excerpt must match an exact substring of the unchanged chunk text. It does not repair quotations, remove whitespace, or accept paraphrases as quotations. If a quote occurs more than once, its first exact match supplies the offsets.
 
-A finding without source evidence is not presented as a supported result. The system keeps the finding and evidence as separate records so users can inspect the connection.
+The backend derives the page, section, and zero-based, end-exclusive chunk offsets from stored text. It ignores no invalid evidence: a candidate with any invalid evidence pair is rejected as a whole. It removes duplicate evidence pairs and marks the first remaining pair as primary. Rejected candidates are not stored or exposed in this version.
+
+Before committing results, the backend checks the document and chunks again. Every supported finding needs at least one valid evidence record. A changed or missing source fails the run. The system keeps the finding and evidence as separate records so users can inspect the connection.
+
+Exact matching establishes a source location, not whether the excerpt logically supports the statement. The interface and evaluation must keep this distinction clear. Manual checks are still needed for unsupported inference, incorrect attribution, missed content, and extraction errors.
 
 ### SQLite Database
 
@@ -105,7 +131,7 @@ SQLite stores:
 - Evidence links and source excerpts
 - Failure reasons and timestamps
 
-The detailed entities and relationships will be defined in `data-model.md`.
+The detailed entities and relationships are defined in `data-model.md`.
 
 ### Local File Cache
 
@@ -124,7 +150,7 @@ PDFs currently use `backend/data/pdfs/{document_id}.pdf`, with `PDF_CACHE_PATH` 
 5. The parser extracts text while keeping page information.
 6. The section detector organises the text into sections.
 7. The text splitter creates traceable chunks.
-8. The analysis client extracts structured findings from relevant chunks.
+8. The user starts analysis, and the analysis client processes all stored chunks in ordered batches.
 9. The evidence validator links each supported finding to source excerpts.
 10. The frontend displays the findings and lets the user inspect the evidence.
 
@@ -155,7 +181,7 @@ Each failed state stores a clear reason. A failed stage does not silently contin
 
 ## Evidence Traceability
 
-The planned evidence chain is:
+The evidence chain is:
 
 ```text
 Paper
@@ -175,6 +201,23 @@ Every supported finding must be traceable to stored source text. PDF evidence us
 - Only legally accessible sources are accepted.
 - The system does not bypass paywalls or access controls.
 - Cached PDFs and extracted text stay outside version control.
+
+Analysis sends extracted open-access paper text to OpenRouter and its selected model provider. Only the required chunk text and source identifiers are sent. Keys, local paths, and raw service error bodies must not appear in API responses, database settings, or logs. Public deployment, user accounts, and access controls remain outside this local MVP.
+
+## Analysis Acceptance Checks
+
+The backend verification covers:
+
+- A parsed multi-page document produces findings whose evidence matches the stored text, page, section, and offsets.
+- Every input chunk appears in a request, including the last batch and unknown sections. Input limits fail before any request.
+- Foreign-document IDs, IDs outside the current batch, empty quotes, altered quotes, and missing evidence cannot create supported findings.
+- Missing categories contain no invented content. Rejected candidates are hidden, and an all-rejected run fails.
+- Invalid responses, service failures, timeouts, cancellation, and restart never expose partial results. Retry clears failure state and preserves earlier completed runs.
+- Duplicate starts are blocked atomically. Active analysis blocks paper deletion; deletion after completion removes related findings and evidence.
+- The five analysis routes follow the API contract, and existing search, library, and document behaviour still works.
+- Service keys and internal file paths do not appear in public responses or recorded settings.
+
+Use isolated databases and cached files for automated checks. Mock external service responses for repeatable failure cases. Remove only the new temporary test files and data after verification; leave existing tests unchanged. A live model check needs configured credentials and must be reported separately from mocked checks. A small manual paper sample must assess statement accuracy and missing findings before the feature is described as evaluated.
 
 ## Future Multi-Paper Comparison
 

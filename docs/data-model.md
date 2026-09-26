@@ -4,7 +4,7 @@ The MVP stores one paper's full-text analysis at a time. The model keeps paper m
 
 ## Design Rules
 
-Implemented tables currently cover Paper, Document, DocumentPage, Section, and Chunk. AnalysisRun, Finding, and Evidence remain planned.
+Implemented tables cover Paper, Document, DocumentPage, Section, Chunk, AnalysisRun, Finding, and Evidence.
 
 - Every supported finding must link to at least one evidence record.
 - Every evidence record must link to stored source text.
@@ -166,6 +166,12 @@ Represents one full-text analysis attempt for a parsed document.
 
 Secret keys must never be stored in `settings_json`.
 
+For `full-text-v1`, `analysis_runs` has a foreign key to Document with cascading deletion. A partial unique index on `document_id` for `pending` and `processing` rows prevents concurrent active runs for the same document. A queue index on `(status, id)` supports oldest-first processing. Status values and `analysis_version = 'full-text-v1'` have database checks.
+
+`settings_json` stores the input file checksum, ordered chunk IDs, a SHA-256 digest of their ordered IDs and text, and the batch, input, output, and timeout limits specified in `architecture.md`. The digest uses UTF-8 JSON pairs of ID and source text, with no extra separator whitespace. It detects stored text changes even when the PDF checksum has not changed. The service name is `OpenRouter`; the model comes from configuration and is fixed for the run. These settings describe an attempt but cannot guarantee identical model output on repetition.
+
+Retry reuses a failed run, keeps its model and settings, clears errors and processing timestamps, and returns it to pending. `created_at` does not change. A completed run cannot be retried or overwritten; another analysis creates another row. `completed_at` is set only on success. Pending work survives restart, while interrupted processing becomes failed.
+
 ## Finding
 
 Represents one structured statement from an analysis run.
@@ -197,9 +203,13 @@ unavailable
 rejected
 ```
 
-`supported` means the finding has source evidence. `unavailable` means the paper does not provide enough information. `rejected` means a candidate statement failed the evidence check.
+`supported` means the finding has source evidence that passed the location and exact-text checks. It does not certify that the statement follows from that evidence. `unavailable` means this run found no validated finding for the category; it is not proof that the paper lacks that information. `rejected` is reserved for a candidate that failed the evidence check. The first implementation discards rejected candidates rather than storing their text.
 
 The model does not store one large summary field. A category may contain several findings, and each finding may use different evidence.
+
+The `findings` table cascades from AnalysisRun. `(analysis_run_id, finding_type, sequence_number)` is unique, with sequence numbers starting at 1 within each category. Database checks restrict categories and support states. Supported content must be non-empty; unavailable content must be null. Each category either has supported findings or one unavailable row, never both. Unavailable rows have no evidence.
+
+The backend inserts findings and evidence and marks the run completed in the same transaction. An incomplete or failed run exposes no findings. An all-empty response across every batch can produce four unavailable rows. A run with candidates but no valid candidate fails with `evidence_missing` instead.
 
 ## Evidence
 
@@ -213,14 +223,20 @@ Links a finding to an exact source excerpt.
 | source_excerpt | text | Not null | Exact supporting text |
 | start_page | integer | Not null | First source page |
 | end_page | integer | Not null | Last source page |
-| start_offset | integer or null | | Start position inside the chunk |
-| end_offset | integer or null | | End position inside the chunk |
+| start_offset | integer | Not null, at least 0 | Start position inside the chunk |
+| end_offset | integer | Not null, greater than start_offset | End-exclusive position inside the chunk |
 | is_primary | boolean | Default false | Main evidence shown first |
 | created_at | datetime | Not null | Record creation time |
 
 One finding may have several evidence records. One chunk may support several findings.
 
 The stored excerpt must match the related chunk text. An excerpt is not valid evidence if it only repeats the finding without linking to the source.
+
+The `evidence` table cascades from Finding and references Chunk. Each `(finding_id, chunk_id, start_offset, end_offset)` tuple is unique. Page checks require `start_page >= 1` and `end_page = start_page`, matching the current single-page chunk design. `is_primary` is stored as 0 or 1, with at most one primary row per finding enforced by a partial unique index.
+
+Before insertion, the backend verifies that the chunk belongs to both the analysed document and the submitted batch. It derives the offsets from an exact match, choosing the first occurrence when repeated. `chunk.source_text[start_offset:end_offset]` must equal `source_excerpt`. Page numbers come from the chunk. Section names come from its related section at query time, not from model output. Page-relative evidence positions are `chunk.start_character + start_offset` and `chunk.start_character + end_offset`.
+
+Transaction checks enforce same-document links, excerpt equality, exactly one primary evidence row per supported finding, and the presence of evidence. Foreign keys alone do not enforce all these rules. Existing parsed source text is immutable while analysis history refers to it.
 
 ## Processing Status Values
 
@@ -255,7 +271,9 @@ Some rules, such as requiring evidence for a supported finding, need transaction
 
 Deleting a paper removes its documents, sections, chunks, analysis runs, findings, and evidence in one controlled transaction. The related cached PDF and parsing files must also be removed.
 
-Deletion is blocked while any document for the paper is queued or processing. The implemented cascade covers documents, pages, sections, and chunks. Cached PDFs are staged before the database transaction commits; a failed transaction restores them. Startup recovers any interrupted file cleanup. Analysis-related cascades will be added with those tables.
+Deletion is blocked while any document for the paper is queued or processing. The implemented cascade covers documents, pages, sections, chunks, analysis runs, findings, and evidence. Cached PDFs are staged before the database transaction commits; a failed transaction restores them. Startup recovers any interrupted file cleanup.
+
+Deletion is also blocked while any related analysis is pending or processing. The check and deletion share a write transaction so a new analysis cannot enter the queue between them. Finding lists and evidence details use read transactions so concurrent deletion cannot produce a supported finding without its evidence.
 
 Deleting one analysis run removes only its findings and evidence. It does not delete the paper, document, sections, or chunks.
 
