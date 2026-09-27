@@ -109,7 +109,7 @@ The local `experiments/` folder is ignored by Git. Formal application tests will
 
 ## Current Status
 
-The backend supports paper discovery, a saved library, and full-text PDF retrieval and parsing. The frontend and backend are developed separately; frontend integration still needs to be checked.
+The backend supports paper discovery, a saved library, full-text PDF retrieval and parsing, and structured findings linked to source evidence. The frontend and backend are developed separately; frontend integration still needs to be checked.
 
 Completed:
 
@@ -118,6 +118,8 @@ Completed:
 - Open-access PDF source lookup and bounded downloads
 - Background document processing, status queries, and retries
 - Page text, sections, and source-linked chunks stored in SQLite
+- Queued full-text analysis, status queries, and explicit retries
+- Four finding categories with exact source excerpts, page locations, and evidence queries
 - OpenRouter structured analysis feasibility test using an abstract
 - Initial system architecture
 - Initial data model
@@ -130,5 +132,6 @@ Next:
 
 - Connect the frontend library and PDF processing views to the backend
 - Check extraction quality on papers with different layouts
-- Implement structured full-text findings and evidence validation
+- Connect the frontend analysis status, findings, and evidence views
+- Configure an OpenRouter model and check real full-text results
 - Evaluate accuracy and traceability

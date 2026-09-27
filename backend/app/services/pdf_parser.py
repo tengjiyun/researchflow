@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import unicodedata
 
 from pypdf import PdfReader
 
@@ -29,10 +30,42 @@ class ParsedDocument:
     chunks: list[dict]
 
 
+SECTION_NUMBER = re.compile(r"^(?:[1-9]\d?(?:\.\d{1,2})*[.)]?|[IVXLCDM]+[.)])\s+")
+
+
+def normalise_heading(line: str) -> str:
+    return ' '.join(unicodedata.normalize('NFKC', line).split())
+
+
 def heading_type(line: str) -> str | None:
-    heading = re.sub(r"^(?:\d+(?:\.\d+)*[.)]?|[IVX]+[.)])\s+", "", line.strip())
+    heading = SECTION_NUMBER.sub('', normalise_heading(line))
     heading = heading.rstrip(":.").lower()
     return HEADINGS.get(heading)
+
+
+def is_numbered_heading(line: str, *, blank_before: bool, blank_after: bool,
+                        previous_headings: tuple[str, ...] = ()) -> bool:
+    if not blank_before:
+        return False
+    heading = normalise_heading(line)
+    number = SECTION_NUMBER.match(heading)
+    if number is None:
+        return False
+    if not blank_after:
+        # Two accepted consecutive headings can establish a top-level numbering sequence.
+        sequence = [re.match(r'^([1-9]\d?)[.)]\s+', normalise_heading(value))
+                    for value in (*previous_headings[-2:], line)]
+        if len(sequence) != 3 or not all(sequence):
+            return False
+        values = [int(match.group(1)) for match in sequence]
+        if values[1] != values[0] + 1 or values[2] != values[1] + 1:
+            return False
+    title = heading[number.end():]
+    # Conservative text-only detection: sentence, table and citation patterns stay body text.
+    return (2 <= len(title) <= 100 and 1 <= len(title.split()) <= 14
+            and title[0].isupper() and not title.endswith(('.', '!', '?', ';', ','))
+            and not re.search(r'[\d=<>\[\]{}\\;/@]', title)
+            and sum(character.isalpha() for character in title) >= 2)
 
 
 def organise_pages(pages: list[str]) -> ParsedDocument:
@@ -69,8 +102,15 @@ def organise_pages(pages: list[str]) -> ParsedDocument:
 
     for page_number, text in enumerate(pages, start=1):
         start = offset = 0
-        for line in text.splitlines(keepends=True):
+        lines = text.splitlines(keepends=True)
+        for index, line in enumerate(lines):
             category = heading_type(line)
+            if (category is None and (current is None or current['section_type'] != 'references')
+                    and is_numbered_heading(line,
+                        blank_before=index == 0 or not lines[index - 1].strip(),
+                        blank_after=index + 1 < len(lines) and not lines[index + 1].strip(),
+                        previous_headings=tuple(s['original_heading'] or '' for s in sections[-2:]))):
+                category = 'unknown'
             if category is not None:
                 add_text(page_number, start, offset)
                 current = {

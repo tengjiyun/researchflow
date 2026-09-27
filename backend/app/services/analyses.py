@@ -5,7 +5,7 @@ import sqlite3
 from fastapi import Request
 
 from app.database import connect_database
-from app.schemas.analyses import AnalysisStatus, Candidate, FINDING_TYPES
+from app.schemas.analyses import AnalysisList, AnalysisStatus, Candidate, FINDING_TYPES
 from app.services.analysis_evidence import (
     DEFAULT_LIMITS, analysis_error, input_digest, make_batches, validate_candidates,
 )
@@ -44,6 +44,19 @@ class AnalysisStore:
     def get(self, run_id: int) -> AnalysisStatus:
         with connect_database(self.database_path) as db:
             return AnalysisStatus(**dict(self._row(db, run_id)))
+
+    def list_for_document(self, document_id: int, *, page: int = 1, page_size: int = 20) -> AnalysisList:
+        with connect_database(self.database_path) as db:
+            db.execute('BEGIN')
+            if db.execute('SELECT 1 FROM documents WHERE id=?', (document_id,)).fetchone() is None:
+                raise analysis_error('document_not_found', 'The document was not found.', 404)
+            rows = db.execute('''SELECT * FROM analysis_runs WHERE document_id=?
+                ORDER BY id DESC LIMIT ? OFFSET ?''',
+                (document_id, page_size + 1, (page - 1) * page_size)).fetchall()
+            return AnalysisList(
+                analyses=[AnalysisStatus(**dict(row)) for row in rows[:page_size]],
+                page=page, page_size=page_size, has_more=len(rows) > page_size,
+            )
 
     def create(self, document_id: int, model: str) -> AnalysisStatus:
         with connect_database(self.database_path) as db:

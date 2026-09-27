@@ -13,6 +13,8 @@ class Settings:
     openalex_base_url: str
     database_path: Path
     pdf_cache_path: Path
+    openrouter_api_key: str | None = None
+    openrouter_model: str | None = None
 
 
 @lru_cache
@@ -40,4 +42,6 @@ def get_settings() -> Settings:
         pdf_cache_path=BACKEND_DIRECTORY / Path(
             os.getenv("PDF_CACHE_PATH") or "data/pdfs"
         ),
+        openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip() or None,
+        openrouter_model=os.getenv("OPENROUTER_MODEL", "").strip() or None,
     )

@@ -111,6 +111,7 @@ def initialise_database(path: Path) -> None:
             CREATE UNIQUE INDEX IF NOT EXISTS analysis_active_document ON analysis_runs(document_id)
                 WHERE status IN ('pending','processing');
             CREATE INDEX IF NOT EXISTS analysis_queue ON analysis_runs(status, id);
+            CREATE INDEX IF NOT EXISTS analysis_document_history ON analysis_runs(document_id, id);
             CREATE TABLE IF NOT EXISTS findings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 analysis_run_id INTEGER NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE,

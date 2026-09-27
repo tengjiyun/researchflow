@@ -26,6 +26,13 @@ class AnalysisStatus(BaseModel):
     created_at: datetime
 
 
+class AnalysisList(BaseModel):
+    analyses: list[AnalysisStatus]
+    page: int = Field(ge=1, le=2147483647)
+    page_size: int = Field(ge=1, le=100)
+    has_more: bool
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
 
