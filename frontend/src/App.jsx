@@ -1,14 +1,23 @@
 // App.jsx 是应用的根组件
-// 负责整体布局（标题 + Tab 导航 + 主内容区）
-// 用本地 state 在两个页面之间切换，不引入路由库
+// 管理三个视图：搜索页、资料库页、论文详情页
+// 用本地 state 做页面切换，不引入路由库
 
 import { useState } from 'react'
 import SearchPage from './pages/SearchPage'
 import LibraryPage from './pages/LibraryPage'
+import PaperDetailPage from './pages/PaperDetailPage'
 
 function App() {
-  // 当前激活的页面：'search' 或 'library'
-  const [activeTab, setActiveTab] = useState('search')
+  // 当前视图：'search' / 'library' / 'detail'
+  const [view, setView] = useState('search')
+  // 详情页要展示的论文 id（只在 view === 'detail' 时有效）
+  const [selectedPaperId, setSelectedPaperId] = useState(null)
+
+  // 从资料库点击某篇论文时调用
+  const openDetail = (paperId) => {
+    setSelectedPaperId(paperId)
+    setView('detail')
+  }
 
   return (
     <div className="app">
@@ -18,27 +27,36 @@ function App() {
         <p>AI-Assisted Research Information Management System</p>
       </header>
 
-      {/* Tab 导航 */}
-      <nav className="app-tabs">
-        <button
-          type="button"
-          className={activeTab === 'search' ? 'app-tab active' : 'app-tab'}
-          onClick={() => setActiveTab('search')}
-        >
-          Search
-        </button>
-        <button
-          type="button"
-          className={activeTab === 'library' ? 'app-tab active' : 'app-tab'}
-          onClick={() => setActiveTab('library')}
-        >
-          My Library
-        </button>
-      </nav>
+      {/* Tab 导航：在详情页时隐藏，避免用户混淆 */}
+      {view !== 'detail' && (
+        <nav className="app-tabs">
+          <button
+            type="button"
+            className={view === 'search' ? 'app-tab active' : 'app-tab'}
+            onClick={() => setView('search')}
+          >
+            Search
+          </button>
+          <button
+            type="button"
+            className={view === 'library' ? 'app-tab active' : 'app-tab'}
+            onClick={() => setView('library')}
+          >
+            My Library
+          </button>
+        </nav>
+      )}
 
-      {/* 主内容区：根据 activeTab 渲染不同页面 */}
+      {/* 主内容区：根据 view 渲染不同页面 */}
       <main className="app-main">
-        {activeTab === 'search' ? <SearchPage /> : <LibraryPage />}
+        {view === 'search' && <SearchPage />}
+        {view === 'library' && <LibraryPage onSelectPaper={openDetail} />}
+        {view === 'detail' && (
+          <PaperDetailPage
+            paperId={selectedPaperId}
+            onBack={() => setView('library')}
+          />
+        )}
       </main>
     </div>
   )

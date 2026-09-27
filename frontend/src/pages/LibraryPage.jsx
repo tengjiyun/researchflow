@@ -8,8 +8,8 @@ import { useState, useEffect } from 'react'
 import { listSavedPapers, deletePaper } from '../api/papers'
 import LoadingSpinner from '../components/LoadingSpinner'
 import ErrorMessage from '../components/ErrorMessage'
-
-function LibraryPage() {
+// LibraryPage.jsx 组件
+function LibraryPage({ onSelectPaper }) {
   const [papers, setPapers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -95,7 +95,13 @@ function LibraryPage() {
           {papers.map((paper) => (
             <div key={paper.id} className="library-item">
               <div className="library-item-info">
-                <h3 className="library-item-title">{paper.title}</h3>
+              <h3
+                className="library-item-title"
+                onClick={() => onSelectPaper(paper.id)}
+                style={{ cursor: 'pointer' }}
+              >
+                {paper.title}
+              </h3>
                 <div className="library-item-meta">
                   {paper.publication_year && (
                     <span>Year: {paper.publication_year}</span>
