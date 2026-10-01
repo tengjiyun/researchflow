@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.papers import router as papers_router
 from app.api.documents import router as documents_router
 from app.api.analyses import router as analyses_router
+from app.api.collections import router as collections_router
 from app.core.config import get_settings
 from app.errors import register_error_handlers
 from app.database import initialise_database
@@ -15,6 +16,7 @@ from app.services.document_worker import DocumentRunner, worker_lock
 from app.services.analyses import AnalysisStore
 from app.services.analysis_client import AnalysisClient
 from app.services.analysis_worker import AnalysisRunner
+from app.services.collections import CollectionStore
 
 
 def create_app() -> FastAPI:
@@ -44,18 +46,20 @@ def create_app() -> FastAPI:
     application.state.analysis_store = AnalysisStore(settings.database_path)
     application.state.analysis_client = AnalysisClient(settings.openrouter_api_key)
     application.state.analysis_model = settings.openrouter_model
+    application.state.collection_store = CollectionStore(settings.database_path)
 
     application.add_middleware(
         CORSMiddleware,
         allow_origins=list(settings.frontend_origins),
         allow_credentials=False,
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type"],
     )
     register_error_handlers(application)
     application.include_router(papers_router, prefix="/api")
     application.include_router(documents_router, prefix="/api")
     application.include_router(analyses_router, prefix="/api")
+    application.include_router(collections_router, prefix="/api")
     return application
 
 

@@ -162,7 +162,31 @@ Successful response: `200 OK`
 
 `document_status` is `null` before document processing starts. `latest_analysis_status` is `null` before an analysis exists. The frontend must not treat either value as an empty string.
 
-The list contains all saved papers, ordered by descending internal ID (newest saved first). An empty library returns `{"papers": []}`. `document_status` follows the newest document: either failed stage means `failed`, completed parsing means `completed`, queued retrieval means `pending`, and other active work means `processing`. Analysis status remains `null` until analysis is implemented.
+Without parameters, the list contains all saved papers, ordered by descending internal ID (newest saved first). An empty result returns `{"papers": []}`. The response fields stay the same when filters are used. There is no pagination in this MVP.
+
+Optional query parameters:
+
+| Parameter | Values and behaviour |
+|---|---|
+| `q` | Substring search in title, individual authors, abstract or DOI; at most 200 characters after trimming |
+| `year_from`, `year_to` | Inclusive publication year bounds, each from 1 to 9999; the lower bound must not exceed the upper bound |
+| `collection_id` | Positive signed 64-bit ID of an existing collection |
+| `document_status` | `pending`, `processing`, `completed`, `failed` or `not_started` |
+| `analysis_status` | `pending`, `processing`, `completed`, `failed` or `not_started` |
+| `sort_by` | `saved_at` (default), `publication_year`, `title` or `citation_count` |
+| `sort_order` | `desc` (default) or `asc` |
+
+Filters combine with AND. Keyword search matches any of the four fields. English matching ignores case; Chinese text matches literally. `%`, `_` and backslashes are ordinary characters, not wildcards. A blank trimmed query applies no keyword filter. Year filters exclude papers with an unknown year.
+
+`document_status` follows the newest document by ID: either failed stage means `failed`, completed parsing means `completed`, queued retrieval means `pending`, and other work means `processing`. `analysis_status` follows the newest analysis by ID across all documents belonging to the paper. `not_started` matches the absence of a document or analysis respectively; the returned status remains `null`.
+
+`saved_at` orders by insertion ID. Other sorts use descending ID to break ties. Unknown publication years come last in both directions. Title sorting uses SQLite's English case-insensitive order, not language-specific collation.
+
+An unknown collection returns `404` with `collection_not_found`; an existing empty collection returns an empty list. Invalid parameters return `422` with `invalid_request`.
+
+```http
+GET /api/papers?q=neural&year_from=2020&collection_id=1&sort_by=publication_year&sort_order=desc
+```
 
 ## 4. Get Saved Paper
 
@@ -209,7 +233,7 @@ Successful response: `204 No Content`
 
 Deleting a paper also removes its documents, sections, chunks, analyses, findings, evidence, and related cache files.
 
-Deletion currently removes paper, document, page, section, and chunk records and their cached files. Analysis records are not implemented yet. A queued or processing document prevents deletion with `409` and `invalid_resource_state` (`retryable: true`). A missing or already deleted paper returns `404` with `paper_not_found`.
+Deletion also removes the paper's collection memberships, but keeps the collections. A queued or processing document or analysis prevents deletion with `409` and `invalid_resource_state` (`retryable: true`). A missing or already deleted paper returns `404` with `paper_not_found`.
 
 Paper IDs for detail and deletion must be positive integers within SQLite's signed 64-bit range. Invalid IDs return `422` with `invalid_request`.
 
@@ -622,6 +646,8 @@ To restore a page after refresh, get document IDs from `GET /api/papers/{paper_i
 | `invalid_request` | No | Request parameters failed validation |
 | `paper_already_saved` | No | OpenAlex paper already exists |
 | `paper_not_found` | No | Saved paper does not exist |
+| `collection_not_found` | No | Collection does not exist |
+| `collection_name_conflict` | No | Another collection has the same normalised, case-folded name |
 | `database_unavailable` | Yes | A library database operation could not finish; retry later |
 | `paper_search_failed` | Yes | External paper search failed |
 | `full_text_source_not_found` | No | No supported open-access PDF was found |
@@ -656,6 +682,40 @@ To restore a page after refresh, get document IDs from `GET /api/papers/{paper_i
 The retryability column describes whether another attempt may help, not whether retry is automatic or free. Document and analysis status objects store `error_code` and `error_message`; the shared HTTP error object also includes `retryable`. Deletion blocked by active processing is the retryable exception to `invalid_resource_state`.
 
 Errors encountered after analysis is accepted appear in its status, not as a later HTTP response to the start request. The worker stops at the failed batch, publishes no partial findings, and makes no automatic repeat requests. If some candidates pass evidence checks, rejected candidates are discarded. If all candidates fail those checks, the run fails with `evidence_missing`. Valid empty responses from every batch instead produce four unavailable categories.
+
+## Collections
+
+A saved paper can belong to several collections. Collections are shared within the local library; there are no accounts or nested groups.
+
+| Method and path | Request | Successful response |
+|---|---|---|
+| `POST /api/collections` | `{"name":"Methods"}` | `201`, collection object |
+| `GET /api/collections` | None | `200`, `{"collections":[...]}` |
+| `PATCH /api/collections/{collection_id}` | `{"name":"New name"}` | `200`, updated collection object |
+| `DELETE /api/collections/{collection_id}` | None | `204`, no body |
+| `PUT /api/collections/{collection_id}/papers/{paper_id}` | None | `204`, no body |
+| `DELETE /api/collections/{collection_id}/papers/{paper_id}` | None | `204`, no body |
+| `GET /api/papers/{paper_id}/collections` | None | `200`, `{"collections":[...]}` |
+
+Collection object:
+
+```json
+{
+  "id": 1,
+  "name": "Methods",
+  "paper_count": 2,
+  "created_at": "2026-09-30T01:00:00Z",
+  "updated_at": "2026-09-30T01:00:00Z"
+}
+```
+
+Names are trimmed and consecutive whitespace becomes one space. The result must contain 1 to 100 characters. Names must be unique after Unicode case folding: `Methods` and `METHODS` conflict. A duplicate create or rename returns `409` with `collection_name_conflict`. Renaming to the collection's own name is allowed. `updated_at` changes on rename; membership changes do not change it.
+
+Lists are ordered by the normalised case-folded name, then ID. Empty lists return `{"collections":[]}`. `paper_count` counts all papers in each collection. To list its papers, use `GET /api/papers?collection_id={collection_id}` and combine the filters above as needed.
+
+Repeated additions and removal of an absent membership return `204` if both resources still exist. Missing collections return `404` with `collection_not_found`; missing papers return `404` with `paper_not_found`. IDs must be positive signed 64-bit integers. Invalid IDs or names return `422` with `invalid_request`.
+
+Deleting a collection removes only the group and its memberships. It keeps papers, cached PDFs, documents, analyses and evidence. These local operations do not call external services. Database contention can return `503` with `database_unavailable`.
 
 ## MVP Access Boundary
 

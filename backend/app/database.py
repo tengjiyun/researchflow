@@ -36,6 +36,20 @@ def initialise_database(path: Path) -> None:
             )
         """)
         connection.executescript("""
+            CREATE TABLE IF NOT EXISTS collections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                name_key TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS paper_collections (
+                paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+                collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (paper_id, collection_id)
+            );
+            CREATE INDEX IF NOT EXISTS paper_collections_collection ON paper_collections(collection_id);
             CREATE TABLE IF NOT EXISTS documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,

@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
 
 class PaperSearchItem(BaseModel):
@@ -49,6 +49,31 @@ class LibraryPaper(BaseModel):
 
 class PaperListResponse(BaseModel):
     papers: list[LibraryPaper]
+
+
+LibraryStatus = Literal['pending', 'processing', 'completed', 'failed', 'not_started']
+
+
+class LibraryQuery(BaseModel):
+    q: str = Field(default='', max_length=200)
+    year_from: int | None = Field(default=None, ge=1, le=9999)
+    year_to: int | None = Field(default=None, ge=1, le=9999)
+    collection_id: int | None = Field(default=None, ge=1, le=9223372036854775807)
+    document_status: LibraryStatus | None = None
+    analysis_status: LibraryStatus | None = None
+    sort_by: Literal['saved_at', 'publication_year', 'title', 'citation_count'] = 'saved_at'
+    sort_order: Literal['asc', 'desc'] = 'desc'
+
+    @field_validator('q', mode='before')
+    @classmethod
+    def strip_query(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode='after')
+    def validate_year_range(self) -> Self:
+        if self.year_from is not None and self.year_to is not None and self.year_from > self.year_to:
+            raise ValueError('year_from must not exceed year_to')
+        return self
 
 
 class PaperDocumentSummary(BaseModel):

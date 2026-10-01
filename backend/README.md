@@ -73,6 +73,24 @@ The database enables foreign key checks on each connection. Writes use transacti
 
 Startup creates the initial table if it is missing. Future table changes need a schema migration; startup does not alter an existing table.
 
+### Library queries and collections
+
+`GET /api/papers` accepts `q`, `year_from`, `year_to`, `collection_id`, `document_status`, `analysis_status`, `sort_by` and `sort_order`. Filters combine with AND. Search checks saved titles, individual authors, abstracts and DOIs without an external call. No parameters keeps the original newest-first response.
+
+Sort by `saved_at`, `publication_year`, `title` or `citation_count`, with `asc` or `desc`. Unknown years remain last. Status filters accept the four task states and `not_started` for papers without a document or analysis. Full validation rules are in the API contract.
+
+Minimal workflow, using IDs returned by the API:
+
+1. Create a group with `POST /api/collections` and `{"name":"Methods"}`.
+2. Add a saved paper with `PUT /api/collections/{collection_id}/papers/{paper_id}`.
+3. Query it with `GET /api/papers?collection_id=1&q=neural&sort_by=publication_year&sort_order=desc`.
+4. Use `GET /api/collections` for groups and counts, or `GET /api/papers/{paper_id}/collections` for a paper's groups.
+5. Rename with `PATCH /api/collections/{collection_id}` and `{"name":"New name"}`. Remove a membership with `DELETE /api/collections/{collection_id}/papers/{paper_id}`.
+
+A paper may belong to several groups. Repeating an addition or removal is safe while both resources exist. Names ignore case and repeated whitespace when checking duplicates. Deleting a group with `DELETE /api/collections/{collection_id}` keeps its papers, PDFs and analysis results. Deleting a paper removes its memberships but keeps the groups.
+
+Startup adds the collection tables to existing databases. The frontend still needs to connect its query and group controls to these endpoints.
+
 ## Full-Text PDFs
 
 ```text

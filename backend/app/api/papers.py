@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Path, Query, Response
 from app.errors import ApiError
 from app.schemas.errors import ErrorResponse
 from app.schemas.papers import (
-    PaperCreate, PaperDetail, PaperListResponse, PaperSearchResponse, SavedPaper,
+    LibraryQuery, PaperCreate, PaperDetail, PaperListResponse, PaperSearchResponse, SavedPaper,
 )
 from app.services.library import PaperLibrary, get_paper_library
 from app.services.openalex import (
@@ -73,9 +73,11 @@ def save_paper(paper: PaperCreate, library: Library) -> SavedPaper:
     return library.save(paper)
 
 
-@router.get("", response_model=PaperListResponse, responses=LIBRARY_ERRORS)
-def list_saved_papers(library: Library) -> PaperListResponse:
-    return PaperListResponse(papers=library.list_papers())
+@router.get("", response_model=PaperListResponse, responses={
+    **LIBRARY_ERRORS, 404: {"model": ErrorResponse, "description": "The collection was not found."},
+})
+def list_saved_papers(library: Library, query: Annotated[LibraryQuery, Query()]) -> PaperListResponse:
+    return PaperListResponse(papers=library.list_papers(query))
 
 
 @router.get("/{paper_id}", response_model=PaperDetail, responses={**LIBRARY_ERRORS, **NOT_FOUND})

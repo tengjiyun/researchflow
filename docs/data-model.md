@@ -4,7 +4,7 @@ The MVP stores one paper's full-text analysis at a time. The model keeps paper m
 
 ## Design Rules
 
-Implemented tables cover Paper, Document, DocumentPage, Section, Chunk, AnalysisRun, Finding, and Evidence.
+Implemented tables cover Paper, Collection, PaperCollection, Document, DocumentPage, Section, Chunk, AnalysisRun, Finding, and Evidence.
 
 - Every supported finding must link to at least one evidence record.
 - Every evidence record must link to stored source text.
@@ -58,6 +58,28 @@ Represents an academic paper found through OpenAlex and saved in the research li
 | updated_at | datetime | Not null | Last metadata update time |
 
 The abstract is not accepted as evidence for a full-text finding.
+
+## Collection and PaperCollection
+
+Papers and collections have a many-to-many relationship through `paper_collections`.
+
+| `collections` field | Type | Rules |
+|---|---|---|
+| id | integer | Primary key, generated on insertion |
+| name | text | Not null; application normalises whitespace and validates 1 to 100 characters |
+| name_key | text | Not null, unique; Unicode case-folded normalised name |
+| created_at | datetime | Not null, UTC creation time |
+| updated_at | datetime | Not null, UTC creation or latest rename time |
+
+| `paper_collections` field | Type | Rules |
+|---|---|---|
+| paper_id | integer | Foreign key to Paper, deletes cascade |
+| collection_id | integer | Foreign key to Collection, deletes cascade |
+| created_at | datetime | Not null, UTC membership creation time |
+
+The composite primary key `(paper_id, collection_id)` prevents duplicate memberships. An index on `collection_id` supports group queries and counts. The API derives `paper_count` from memberships rather than storing a separate counter.
+
+Deleting a collection removes only its memberships, not papers or their analysis data. Deleting a paper removes its memberships but keeps the collections. Startup adds both tables and the index if missing, without rebuilding existing tables. Repeated initialisation preserves records. Write transactions keep resource checks and membership changes together.
 
 ## Document
 

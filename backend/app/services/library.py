@@ -8,7 +8,7 @@ from fastapi import Request
 
 from app.database import connect_database
 from app.errors import ApiError
-from app.schemas.papers import LibraryPaper, PaperCreate, PaperDetail, SavedPaper
+from app.schemas.papers import LibraryPaper, LibraryQuery, PaperCreate, PaperDetail, SavedPaper
 
 
 def paper_not_found() -> ApiError:
@@ -61,8 +61,47 @@ class PaperLibrary:
             ).fetchone()
             return SavedPaper(**paper_fields(row))
 
-    def list_papers(self) -> list[LibraryPaper]:
+    def list_papers(self, query: LibraryQuery | None = None) -> list[LibraryPaper]:
+        query = query or LibraryQuery()
+        conditions = []
+        parameters = []
+        if query.q:
+            conditions.append('''(instr(lower(p.title), lower(?)) > 0
+                OR instr(lower(p.abstract), lower(?)) > 0
+                OR instr(lower(p.doi), lower(?)) > 0
+                OR EXISTS (SELECT 1 FROM json_each(p.authors_json) author
+                    WHERE instr(lower(author.value), lower(?)) > 0))''')
+            parameters.extend([query.q] * 4)
+        if query.year_from is not None:
+            conditions.append('p.publication_year >= ?')
+            parameters.append(query.year_from)
+        if query.year_to is not None:
+            conditions.append('p.publication_year <= ?')
+            parameters.append(query.year_to)
+        if query.collection_id is not None:
+            conditions.append('''EXISTS (SELECT 1 FROM paper_collections pc
+                WHERE pc.paper_id=p.id AND pc.collection_id=?)''')
+            parameters.append(query.collection_id)
+        for column, status in (('document_status', query.document_status),
+                               ('latest_analysis_status', query.analysis_status)):
+            if status == 'not_started':
+                conditions.append(f'{column} IS NULL')
+            elif status is not None:
+                conditions.append(f'{column} = ?')
+                parameters.append(status)
+        sort_column = {'saved_at': 'p.id', 'publication_year': 'p.publication_year',
+                       'title': 'p.title COLLATE NOCASE', 'citation_count': 'p.citation_count'}[query.sort_by]
+        direction = {'asc': 'ASC', 'desc': 'DESC'}[query.sort_order]
+        ordering = f'{sort_column} {direction}, p.id DESC'
+        if query.sort_by == 'publication_year':
+            ordering = 'p.publication_year IS NULL, ' + ordering
         with connect_database(self.database_path) as connection:
+            connection.execute('BEGIN')
+            if query.collection_id is not None and connection.execute(
+                'SELECT 1 FROM collections WHERE id=?', (query.collection_id,),
+            ).fetchone() is None:
+                raise ApiError(status_code=404, code='collection_not_found',
+                               message='The collection was not found.', retryable=False)
             rows = connection.execute(
                 """SELECT p.id, p.openalex_id, p.title, p.publication_year, p.venue,
                     (SELECT CASE WHEN d.retrieval_status='failed' OR d.parsing_status='failed' THEN 'failed'
@@ -71,7 +110,10 @@ class PaperLibrary:
                      FROM documents d WHERE d.paper_id=p.id ORDER BY d.id DESC LIMIT 1) AS document_status,
                     (SELECT a.status FROM analysis_runs a JOIN documents d ON d.id=a.document_id
                      WHERE d.paper_id=p.id ORDER BY a.id DESC LIMIT 1) AS latest_analysis_status
-                    FROM papers p ORDER BY p.id DESC"""
+                    FROM papers p"""
+                + (' WHERE ' + ' AND '.join(conditions) if conditions else '')
+                + ' ORDER BY ' + ordering,
+                parameters,
             ).fetchall()
             return [LibraryPaper(**dict(row)) for row in rows]
 
