@@ -75,13 +75,19 @@ Successful response: `200 OK`
     }
   ],
   "page": 1,
-  "has_more": false
+  "has_more": false,
+  "from_cache": false,
+  "cached_at": "2026-10-01T01:00:00Z"
 }
 ```
 
 The abstract is discovery metadata. It is not full-text evidence.
 
-If the external paper search fails, the API returns `502 Bad Gateway` with the `paper_search_failed` error code.
+Each request tries OpenAlex first. A successful result, including an empty list, replaces the matching SQLite cache entry. Cache keys include the trimmed query, page, fixed page size (25), upstream base URL and response version. Query case and internal spacing remain significant. Caching does not save papers to the library.
+
+If external search fails, including rate limiting or timeout, the API can return the matching cached result with `200 OK` when it is no more than seven days old. It sets `from_cache` to `true` and retains the original UTC `cached_at` time. The frontend should label this as a cached result, not current search data. Reading the cache does not extend its age.
+
+Live results use `from_cache: false`. `cached_at` is the successful cache-write time, or `null` if writing failed; a cache-write failure does not discard a live result. Missing, expired, unreadable or invalid cached data cannot serve as fallback. In those cases an external search failure returns `502 Bad Gateway` with `paper_search_failed`. Failed searches never overwrite a successful cached result.
 
 ## 2. Save Paper
 

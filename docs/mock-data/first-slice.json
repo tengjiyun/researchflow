@@ -19,7 +19,9 @@
         }
       ],
       "page": 1,
-      "has_more": false
+      "has_more": false,
+      "from_cache": false,
+      "cached_at": "2026-10-01T01:00:00Z"
     }
   },
   "search_empty": {
@@ -27,7 +29,9 @@
     "body": {
       "papers": [],
       "page": 1,
-      "has_more": false
+      "has_more": false,
+      "from_cache": false,
+      "cached_at": "2026-10-01T01:00:00Z"
     }
   },
   "save_success": {
@@ -87,4 +91,3 @@
     }
   }
 }
-

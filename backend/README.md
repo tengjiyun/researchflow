@@ -55,6 +55,10 @@ GET /api/papers/search?q={query}&page={page}
 
 The endpoint trims the search text, uses 25 results per page, and returns the shared error shape for invalid parameters or an external search failure.
 
+Search tries OpenAlex first and stores successful responses in SQLite, including empty results. On failure it can return the matching result from the previous seven days. Responses add `from_cache` and `cached_at`; the frontend should show the cache time when `from_cache` is true. If there is no usable cache, the endpoint keeps returning `502` with `paper_search_failed`. A failed cache write still returns the live result, with `cached_at: null`.
+
+The cache survives backend restarts and does not add papers to the saved library. It separates queries, pages, page sizes, upstream URLs and response versions. Only surrounding query whitespace is removed. There is no automatic request retry, background refresh or cache-first lookup. The seven-day limit controls fallback eligibility; expired rows are not automatically deleted, and a later successful matching search replaces them.
+
 ## Paper Library
 
 The backend creates `data/researchflow.sqlite3` on startup. Saved papers remain available after a restart. SQLite uses Python's standard library, so no database server or extra package is needed.

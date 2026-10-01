@@ -299,6 +299,12 @@ Deletion is also blocked while any related analysis is pending or processing. Th
 
 Deleting one analysis run removes only its findings and evidence. It does not delete the paper, document, sections, or chunks.
 
+## SearchCache
+
+`search_cache` stores successful search responses separately from saved papers. It has three fields: `cache_key` (text primary key), `response_json` (not-null text) and `cached_at` (not-null UTC timestamp).
+
+The key encodes the response version, upstream base URL, trimmed query, page and page size. Each successful search replaces the corresponding response and timestamp. Cache reads validate the stored response and accept ages from zero to seven days. There are no foreign keys to paper or analysis records. Deleting a saved paper does not remove search results, and caching a result does not save a paper.
+
 ## Future Multi-Paper Comparison
 
 The MVP does not need comparison tables. A later stage can add `ComparisonRun` and `ComparisonPaper` records that refer to completed analysis runs.
