@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from app.schemas.papers import PaperSearchItem, PaperSearchResponse
 from app.services.openalex import OpenAlexSearchError
 
@@ -39,6 +41,8 @@ def test_search_papers_returns_contract_shape(client, set_search_service) -> Non
     )
 
     assert response.status_code == 200
+    cached_at = response.json()['cached_at']
+    assert datetime.fromisoformat(cached_at).utcoffset().total_seconds() == 0
     assert response.json() == {
         "papers": [
             {
@@ -55,6 +59,8 @@ def test_search_papers_returns_contract_shape(client, set_search_service) -> Non
         ],
         "page": 2,
         "has_more": False,
+        "from_cache": False,
+        "cached_at": cached_at,
     }
 
 

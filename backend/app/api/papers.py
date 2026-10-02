@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response
+from starlette.concurrency import run_in_threadpool
 
 from app.errors import ApiError
 from app.schemas.errors import ErrorResponse
@@ -8,6 +9,7 @@ from app.schemas.papers import (
     LibraryQuery, PaperCreate, PaperDetail, PaperListResponse, PaperSearchResponse, SavedPaper,
 )
 from app.services.library import PaperLibrary, get_paper_library
+from app.services.search_cache import SearchCache, get_search_cache
 from app.services.openalex import (
     OpenAlexSearchError,
     OpenAlexService,
@@ -35,6 +37,7 @@ async def search_papers(
     q: Annotated[str, Query(min_length=1)],
     page: Annotated[int, Query(ge=1)] = 1,
     service: OpenAlexService = Depends(get_openalex_service),
+    cache: SearchCache = Depends(get_search_cache),
 ) -> PaperSearchResponse:
     query = q.strip()
     if not query:
@@ -46,14 +49,19 @@ async def search_papers(
         )
 
     try:
-        return await service.search_papers(query=query, page=page)
+        result = await service.search_papers(query=query, page=page)
     except OpenAlexSearchError as exc:
+        cached = await run_in_threadpool(cache.load, query, page)
+        if cached is not None:
+            return cached
         raise ApiError(
             status_code=502,
             code="paper_search_failed",
             message="The paper search service is unavailable.",
             retryable=True,
         ) from exc
+    cached_at = await run_in_threadpool(cache.save, query, page, result)
+    return result.model_copy(update={'from_cache': False, 'cached_at': cached_at})
 
 
 Library = Annotated[PaperLibrary, Depends(get_paper_library)]

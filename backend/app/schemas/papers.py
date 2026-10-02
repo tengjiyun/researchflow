@@ -20,6 +20,8 @@ class PaperSearchResponse(BaseModel):
     papers: list[PaperSearchItem]
     page: int = Field(ge=1)
     has_more: bool
+    from_cache: bool = False
+    cached_at: datetime | None = None
 
 
 class PaperCreate(PaperSearchItem):

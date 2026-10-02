@@ -36,6 +36,11 @@ def initialise_database(path: Path) -> None:
             )
         """)
         connection.executescript("""
+            CREATE TABLE IF NOT EXISTS search_cache (
+                cache_key TEXT PRIMARY KEY,
+                response_json TEXT NOT NULL,
+                cached_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS collections (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
