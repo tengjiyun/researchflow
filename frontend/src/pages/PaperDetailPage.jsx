@@ -21,6 +21,7 @@ import {
   retryDocument,
   getDocumentSections,
   getSectionChunks,
+  uploadDocument,
 } from '../api/documents'
 import LoadingSpinner from '../components/LoadingSpinner'
 import ErrorMessage from '../components/ErrorMessage'
@@ -39,6 +40,9 @@ function PaperDetailPage({ paperId, onBack }) {
   const [loadingSources, setLoadingSources] = useState(false)
   const [sourceError, setSourceError] = useState(null)
   const [starting, setStarting] = useState(false)
+  // 手动上传状态
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState(null)
 
   // ---------- 当前活跃的 document ----------
   const [activeDocumentId, setActiveDocumentId] = useState(null)
@@ -202,6 +206,33 @@ function PaperDetailPage({ paperId, onBack }) {
     }
   }
 
+  // 事件：手动上传 PDF
+  const handleUpload = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    setUploading(true)
+    setUploadError(null)
+    setProcessingError(null)
+
+    try {
+      const doc = await uploadDocument(paperId, file)
+      setActiveDocumentId(doc.id)
+      setActiveDocument(doc)
+      // 上传后后端会立刻开始解析，所以进入轮询
+      setPolling(true)
+    } catch (err) {
+      setUploadError(
+        err.response?.data?.error?.message ||
+          'Failed to upload the PDF. Please try again.'
+      )
+    } finally {
+      setUploading(false)
+      // 清空文件输入，让用户可以再次选择同一个文件
+      event.target.value = ''
+    }
+  }
+
   // ---------- 事件：展开某个章节，加载其 chunks ----------
   const handleToggleSection = async (sectionId) => {
     // 已展开则收起
@@ -326,14 +357,34 @@ function PaperDetailPage({ paperId, onBack }) {
           {!activeDocument && !sources && (
             <div className="document-actions">
               <p className="empty-hint">No full-text document attached yet.</p>
+
+              {/* 方式 1：自动查找源 */}
               <button
                 type="button"
                 className="find-sources-button"
                 onClick={handleFindSources}
-                disabled={loadingSources}
+                disabled={loadingSources || uploading}
               >
                 {loadingSources ? 'Searching...' : 'Find PDF Sources'}
               </button>
+
+              {/* 方式 2：手动上传 PDF（绕过出版商反爬虫） */}
+              <div className="upload-block">
+                <p className="upload-hint">
+                  Or upload a PDF you downloaded yourself:
+                </p>
+                <label className="upload-label">
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    onChange={handleUpload}
+                    disabled={uploading}
+                  />
+                  {uploading ? 'Uploading...' : 'Upload PDF'}
+                </label>
+              </div>
+
+              {uploadError && <ErrorMessage message={uploadError} />}
             </div>
           )}
 

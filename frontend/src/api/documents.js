@@ -79,3 +79,29 @@ export async function getSectionChunks(sectionId) {
   const response = await client.get(`/sections/${sectionId}/chunks`)
   return response.data.chunks
 }
+
+/**
+ * 手动上传 PDF 到某篇已保存论文
+ * 对应后端接口：POST /api/papers/{paper_id}/documents/upload
+ *
+ * @param {number} paperId
+ * @param {File} file - 浏览器 File 对象（来自 <input type="file">）
+ * @returns {Promise<object>} 新建的 document 状态对象
+ */
+export async function uploadDocument(paperId, file) {
+  // 用 FormData 构造 multipart/form-data 请求体
+  const formData = new FormData()
+  formData.append('file', file)
+  // 后端要求 confirmed=true，表示用户确认该 PDF 属于这篇论文
+  formData.append('confirmed', 'true')
+
+  const response = await client.post(
+    `/papers/${paperId}/documents/upload`,
+    formData,
+    {
+      // 让浏览器自动设置 multipart boundary，不要手动设置 Content-Type
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }
+  )
+  return response.data
+}
