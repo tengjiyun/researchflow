@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, File, Form, Path, UploadFile
 from starlette.concurrency import run_in_threadpool
 
 from app.errors import ApiError
@@ -11,10 +11,10 @@ from app.schemas.errors import ErrorResponse
 from app.services.documents import DocumentStore, get_document_store
 from app.services.library import PaperLibrary, get_paper_library
 from app.services.openalex import OpenAlexSearchError, OpenAlexService, get_openalex_service
-from app.services.pdf_download import DocumentError, validate_source_url
+from app.services.pdf_download import DocumentError, MAX_PDF_BYTES, validate_source_url
 
 router = APIRouter(tags=["documents"], responses={
-    status: {"model": ErrorResponse} for status in (400, 404, 409, 422, 502, 503)
+    status: {"model": ErrorResponse} for status in (400, 404, 409, 413, 422, 502, 503)
 })
 Identifier = Annotated[int, Path(ge=1, le=9223372036854775807)]
 Store = Annotated[DocumentStore, Depends(get_document_store)]
@@ -56,6 +56,23 @@ async def create_document(
 @router.get("/documents/{document_id}", response_model=DocumentStatus)
 def document_status(document_id: Identifier, store: Store):
     return store.get(document_id)
+
+
+@router.post('/papers/{paper_id}/documents/upload', status_code=202, response_model=DocumentStatus)
+async def upload_document(
+    paper_id: Identifier, store: Store,
+    file: Annotated[UploadFile, File()], confirmed: Annotated[bool, Form()],
+):
+    try:
+        if not confirmed:
+            raise ApiError(status_code=400, code='upload_confirmation_required',
+                           message='Confirm that the PDF belongs to this paper and you may process it.', retryable=False)
+        if file.size is not None and file.size > MAX_PDF_BYTES:
+            raise ApiError(status_code=413, code='pdf_too_large',
+                           message='The PDF exceeds the 25 MiB size limit.', retryable=False)
+        return await run_in_threadpool(store.create_upload, paper_id, file.file, file.filename or 'upload.pdf')
+    finally:
+        await file.close()
 
 
 @router.post("/documents/{document_id}/retry", status_code=202, response_model=DocumentStatus)

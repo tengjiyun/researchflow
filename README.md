@@ -8,7 +8,7 @@ How effectively can a web-based system extract, organise, and synthesise evidenc
 
 ## MVP Goal
 
-The MVP will process one paper at a time. It will accept a legally accessible, machine-readable open-access PDF, analyse its full text, and return structured findings with supporting evidence.
+The MVP will process one paper at a time. It will retrieve a machine-readable open-access PDF or accept a user-provided PDF that they may process, analyse its full text, and return structured findings with supporting evidence. Uploading a file does not establish its access rights or licence.
 
 ### In Scope
 
@@ -16,6 +16,7 @@ The MVP will process one paper at a time. It will accept a legally accessible, m
 - View paper metadata and abstracts
 - Save and manage papers in a research library
 - Process one machine-readable open-access PDF at a time
+- Accept a manually uploaded PDF as a fallback through the backend; the frontend upload control is still needed
 - Extract text while keeping page and section information
 - Identify the research problem, methodology, key findings, and limitations
 - Link every finding to a page, section, and source excerpt
@@ -25,7 +26,7 @@ The MVP will process one paper at a time. It will accept a legally accessible, m
 
 - Scanned PDFs and optical character recognition
 - HTML full-text processing
-- Access to papers behind a paywall
+- Bypassing paywalls or access controls
 - Multi-paper comparison and synthesis
 - Research gap discovery
 - Automatic production of a complete literature review

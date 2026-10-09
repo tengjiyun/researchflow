@@ -83,18 +83,20 @@ Deleting a collection removes only its memberships, not papers or their analysis
 
 ## Document
 
-Represents one retrieved full-text version of a paper.
+Represents one downloaded or uploaded full-text version of a paper.
 
 | Field | Type | Rules | Description |
 |---|---|---|---|
 | id | integer | Primary key | Internal document ID |
 | paper_id | integer | Foreign key, not null | Related paper |
-| source_url | string | Not null | Open-access PDF location |
+| source_kind | string | `download` or `upload`; defaults to `download` | How the file entered the system |
+| original_filename | string or null | Uploads only; not used as a storage path | Filename without directory components |
+| source_url | string or null | Required for downloads; null for uploads | Open-access PDF location |
 | source_format | string | Must be `pdf` in the MVP | Source format |
-| access_type | string | Must be `open_access` in the MVP | Access classification |
+| access_type | string | `open_access` for downloads; `unknown` for uploads | Access classification, not inferred from upload success |
 | licence | string or null | | Licence supplied by the source, when available |
 | local_file_path | string or null | | Path inside the local file cache |
-| file_sha256 | string or null | | File checksum used to detect duplicate content |
+| file_sha256 | string or null | | File checksum used to bind analysis to its source; uploads are not deduplicated |
 | file_size_bytes | integer or null | | Retrieved file size |
 | page_count | integer or null | | Number of PDF pages after parsing |
 | retrieval_status | string | Not null | Retrieval state |
@@ -108,7 +110,11 @@ Represents one retrieved full-text version of a paper.
 
 A paper may have more than one document because an open-access location or file version may change. Only a successfully parsed document can start full-text analysis.
 
-The current implementation allows one document per `(paper_id, source_url)` pair. Retry reuses the same document ID and downloads that source again. New source URLs may create another document. Failed processing records remain available for inspection.
+Downloads allow one document per `(paper_id, source_url)` pair. Uploads have a null source URL and each receive a new ID. Failed processing records remain available for inspection. Retrying a download retrieves the source again. Retrying an upload preserves its file and queues only parsing. A missing uploaded file needs a new upload. Documents with analysis history cannot replace their source through retry.
+
+Uploaded bytes are saved before their record becomes visible to the queue. Accepted uploads have retrieval `completed` and parsing `pending`; claiming the job sets parsing to `processing`. Startup removes abandoned upload staging files and marks interrupted parsing as failed without deleting the uploaded PDF.
+
+Startup upgrades older document tables in a transaction. It preserves existing IDs, the document ID sequence, source metadata and child records. Existing rows become `download` records. Foreign keys are checked before the migration commits. Stop older backend processes before upgrading and keep a database backup.
 
 ## DocumentPage
 

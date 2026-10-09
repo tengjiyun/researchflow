@@ -106,7 +106,9 @@ class PaperLibrary:
                 """SELECT p.id, p.openalex_id, p.title, p.publication_year, p.venue,
                     (SELECT CASE WHEN d.retrieval_status='failed' OR d.parsing_status='failed' THEN 'failed'
                         WHEN d.parsing_status='completed' THEN 'completed'
-                        WHEN d.retrieval_status='pending' THEN 'pending' ELSE 'processing' END
+                        WHEN d.retrieval_status='pending'
+                            OR (d.source_kind='upload' AND d.parsing_status='pending') THEN 'pending'
+                        ELSE 'processing' END
                      FROM documents d WHERE d.paper_id=p.id ORDER BY d.id DESC LIMIT 1) AS document_status,
                     (SELECT a.status FROM analysis_runs a JOIN documents d ON d.id=a.document_id
                      WHERE d.paper_id=p.id ORDER BY a.id DESC LIMIT 1) AS latest_analysis_status
@@ -136,7 +138,7 @@ class PaperLibrary:
             with connect_database(self.database_path) as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 active = connection.execute("""SELECT 1 FROM documents WHERE paper_id=? AND
-                    (retrieval_status IN ('pending', 'processing') OR parsing_status='processing')""", (paper_id,)).fetchone()
+                    (retrieval_status IN ('pending', 'processing') OR parsing_status IN ('pending','processing'))""", (paper_id,)).fetchone()
                 if active:
                     raise ApiError(status_code=409, code="invalid_resource_state",
                                    message="Wait for document processing to finish before deleting the paper.", retryable=True)

@@ -4,6 +4,64 @@ from pathlib import Path
 import sqlite3
 
 
+DOCUMENT_TABLE = """
+    CREATE TABLE IF NOT EXISTS {table} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+        source_kind TEXT NOT NULL DEFAULT 'download' CHECK (source_kind IN ('download','upload')),
+        original_filename TEXT,
+        source_url TEXT,
+        source_format TEXT NOT NULL DEFAULT 'pdf' CHECK (source_format = 'pdf'),
+        access_type TEXT NOT NULL DEFAULT 'open_access' CHECK (access_type IN ('open_access','unknown')),
+        licence TEXT,
+        local_file_path TEXT,
+        file_sha256 TEXT,
+        file_size_bytes INTEGER,
+        page_count INTEGER,
+        retrieval_status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (retrieval_status IN ('pending','processing','completed','failed')),
+        parsing_status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (parsing_status IN ('pending','processing','completed','failed')),
+        error_code TEXT,
+        error_message TEXT,
+        retrieved_at TEXT,
+        parsed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK ((source_kind='download' AND source_url IS NOT NULL AND access_type='open_access')
+            OR (source_kind='upload' AND source_url IS NULL AND access_type='unknown')),
+        UNIQUE(paper_id, source_url)
+    )
+"""
+
+
+def migrate_documents(connection: sqlite3.Connection) -> None:
+    columns = [row['name'] for row in connection.execute('PRAGMA table_info(documents)')]
+    if 'source_kind' in columns:
+        return
+    connection.execute('PRAGMA foreign_keys = OFF')
+    try:
+        connection.execute('BEGIN IMMEDIATE')
+        sequence = connection.execute("SELECT seq FROM sqlite_sequence WHERE name='documents'").fetchone()
+        connection.execute(DOCUMENT_TABLE.format(table='documents_new'))
+        names = ', '.join(columns)
+        connection.execute(f'INSERT INTO documents_new ({names}) SELECT {names} FROM documents')
+        connection.execute('DROP TABLE documents')
+        connection.execute('ALTER TABLE documents_new RENAME TO documents')
+        if sequence is not None:
+            connection.execute("DELETE FROM sqlite_sequence WHERE name='documents'")
+            connection.execute("INSERT INTO sqlite_sequence(name, seq) VALUES ('documents', ?)", (sequence[0],))
+        connection.execute('CREATE INDEX documents_paper ON documents(paper_id, id)')
+        if connection.execute('PRAGMA foreign_key_check').fetchone() is not None:
+            raise sqlite3.IntegrityError('Document migration failed the foreign key check.')
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.execute('PRAGMA foreign_keys = ON')
+
+
 @contextmanager
 def connect_database(path: Path) -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(path, timeout=5.0)
@@ -35,6 +93,7 @@ def initialise_database(path: Path) -> None:
                 updated_at TEXT NOT NULL
             )
         """)
+        connection.execute(DOCUMENT_TABLE.format(table='documents'))
         connection.executescript("""
             CREATE TABLE IF NOT EXISTS search_cache (
                 cache_key TEXT PRIMARY KEY,
@@ -55,29 +114,6 @@ def initialise_database(path: Path) -> None:
                 PRIMARY KEY (paper_id, collection_id)
             );
             CREATE INDEX IF NOT EXISTS paper_collections_collection ON paper_collections(collection_id);
-            CREATE TABLE IF NOT EXISTS documents (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
-                source_url TEXT NOT NULL,
-                source_format TEXT NOT NULL DEFAULT 'pdf' CHECK (source_format = 'pdf'),
-                access_type TEXT NOT NULL DEFAULT 'open_access' CHECK (access_type = 'open_access'),
-                licence TEXT,
-                local_file_path TEXT,
-                file_sha256 TEXT,
-                file_size_bytes INTEGER,
-                page_count INTEGER,
-                retrieval_status TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (retrieval_status IN ('pending','processing','completed','failed')),
-                parsing_status TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (parsing_status IN ('pending','processing','completed','failed')),
-                error_code TEXT,
-                error_message TEXT,
-                retrieved_at TEXT,
-                parsed_at TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(paper_id, source_url)
-            );
             CREATE TABLE IF NOT EXISTS document_pages (
                 document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
                 page_number INTEGER NOT NULL CHECK (page_number >= 1),
@@ -159,3 +195,4 @@ def initialise_database(path: Path) -> None:
             );
             CREATE UNIQUE INDEX IF NOT EXISTS evidence_primary ON evidence(finding_id) WHERE is_primary=1;
         """)
+        migrate_documents(connection)

@@ -23,10 +23,12 @@ Run these commands from the `backend` folder:
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+.\.venv\Scripts\python.exe -m uvicorn app.main:app
 ```
 
 The API runs at `http://127.0.0.1:8000`. Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
+
+On Windows, do not use `--reload` for PDF processing. It selects an event loop that does not support the worker's asynchronous subprocess. Restart the backend manually after code changes.
 
 Run tests with:
 
@@ -100,6 +102,7 @@ Startup adds the collection tables to existing databases. The frontend still nee
 ```text
 GET  /api/papers/{paper_id}/full-text-sources
 POST /api/papers/{paper_id}/documents
+POST /api/papers/{paper_id}/documents/upload
 GET  /api/documents/{document_id}
 POST /api/documents/{document_id}/retry
 GET  /api/documents/{document_id}/sections
@@ -111,6 +114,12 @@ Save the paper first, then query its full-text sources. The source list contains
 
 The start endpoint returns `202` with a document ID. Poll the document endpoint until parsing is `completed` or `failed`. A failure includes an error code and a short reason. A duplicate paper/source pair returns `409`; use the retry endpoint for a failed document. Retry downloads the source again and replaces any partial parsing records.
 
+If automatic retrieval is blocked, upload a locally available PDF using multipart fields `file` and `confirmed=true`. Confirmation means the file belongs to the saved paper and the user may process it. Install the updated requirements first. Uploads are limited to 25 MiB and must start with the PDF signature. Each upload creates a new document with `source_kind=upload`, `source_url=null` and `access_type=unknown`; it does not infer a licence or overwrite an earlier document. The backend generates its storage filename and keeps only the original filename without directory components for display.
+
+An accepted upload has retrieval `completed` and parsing `pending`. The existing worker parses the saved file without making a download request. Poll the same document endpoint and use the existing analysis and evidence endpoints after parsing completes. Retrying a failed upload preserves its file and queues parsing again. If the local file is missing, upload it again as a new document. The frontend upload control is not included in this backend change.
+
+This is a local-only upload endpoint, not a public file-hosting service. The 25 MiB file check runs after multipart parsing; public deployment would also need an incoming request limit and access controls. Uploading does not call OpenRouter. Starting a later analysis sends extracted text to the selected provider.
+
 The database stores the queue. One background worker processes one document at a time in a separate process. Run one backend process per database; multiple application workers are not supported. A file lock prevents a second worker from using the same database. A running child process also holds a job lock. After an abrupt stop, wait up to 90 seconds for that job to exit before restarting. Queued documents resume on startup; interrupted active documents become failed and can be retried.
 
 Downloads have a 25 MiB limit, a 45-second time budget, and at most five redirects. Each destination must resolve only to public addresses. The connection uses the checked address and verifies HTTPS certificates against the original hostname. Local addresses, credentials in URLs, and ports other than 80 or 443 are rejected. The downloaded bytes must begin with the PDF signature. Each complete job has a 90-second process limit.
@@ -121,9 +130,11 @@ Sections use common English headings, including numbered headings. Heading compa
 
 Text chunks contain at most 2,000 characters and never cross a page or section boundary. Their character positions are zero-based, end-exclusive offsets into the stored page text. The source text is not rewritten. No chunk overlap is added. Page numbers start at 1.
 
-Cached PDFs use `data/pdfs/{document_id}.pdf`. Set `PDF_CACHE_PATH` to change the cache folder; relative paths use the backend directory. Keep custom caches outside version control. Files remain until their paper is deleted or the document is retried. Temporary downloads use `.part`; interrupted deletion uses `.deleting`. Paths and checksums are internal and are not returned by the API.
+Cached PDFs use `data/pdfs/{document_id}.pdf`. Set `PDF_CACHE_PATH` to change the cache folder; relative paths use the backend directory. Keep custom caches outside version control. Downloads are replaced on retry; uploaded originals remain until their paper is deleted. Temporary downloads use `.part`; uploads use `upload-*.part` until saved; interrupted deletion uses `.deleting`. Paths and checksums are internal and are not returned by the API.
 
 Startup adds the document tables and `analysis_runs`, `findings`, and `evidence` without replacing existing paper records or extracted text. A document with analysis history cannot be retried to replace its source. A different PDF version needs a different document record.
+
+The upload upgrade rebuilds older document tables in a transaction to allow a null source URL and unknown access rights. It preserves document IDs, their sequence, existing metadata and related evidence, and checks foreign keys before committing. Stop older backend processes and back up the database before the first startup with this version.
 
 ## Full-Text Analysis
 

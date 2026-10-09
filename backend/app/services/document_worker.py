@@ -95,8 +95,11 @@ def process_document(store: DocumentStore, document_id: int):
     try:
         document = store.get(document_id)
         path = store.pdf_path(document_id)
-        size, digest = download_pdf(document.source_url, path)
-        store.downloaded(document_id, size, digest)
+        if document.source_kind == 'download':
+            size, digest = download_pdf(document.source_url, path)
+            store.downloaded(document_id, size, digest)
+        elif not path.is_file():
+            raise DocumentError('pdf_file_missing', 'The uploaded PDF is missing. Upload the file again.')
         store.complete(document_id, parse_pdf(path))
     except DocumentError as exc:
         store.fail(document_id, exc.code, exc.message)

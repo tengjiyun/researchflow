@@ -308,6 +308,45 @@ The submitted URL must match a current source returned by OpenAlex for this save
 
 The same paper/source pair cannot be started twice (`409`). Failed documents use the retry endpoint. The response is a document status object; the worker continues after the request ends. It processes one document at a time.
 
+### Upload a PDF Instead of Downloading It
+
+```http
+POST /api/papers/{paper_id}/documents/upload
+Content-Type: multipart/form-data
+```
+
+Use this endpoint for a locally available PDF when automatic retrieval fails. The paper must already be saved. Send these form fields:
+
+| Field | Value |
+|---|---|
+| `file` | One PDF file, at most 25 MiB |
+| `confirmed` | `true`: the user confirms that the file belongs to this paper and that they may process it |
+
+For browser requests, use `FormData` and let the browser set the multipart boundary. Do not send JSON or manually set `Content-Type`.
+
+The response is `202 Accepted` with the full document status object. For example, these fields identify an accepted upload:
+
+```json
+{
+  "id": 11,
+  "paper_id": 1,
+  "source_kind": "upload",
+  "original_filename": "paper.pdf",
+  "source_url": null,
+  "source_format": "pdf",
+  "access_type": "unknown",
+  "licence": null,
+  "retrieval_status": "completed",
+  "parsing_status": "pending"
+}
+```
+
+Acceptance means the file has been saved, not that parsing has succeeded. Poll `GET /api/documents/{document_id}` as for downloaded PDFs. Successful uploads use the same section, chunk, analysis and evidence endpoints. An upload creates a new document ID, even if its filename or contents match an earlier file. It does not replace failed downloads or existing evidence.
+
+The backend checks the file signature and size, uses its own storage filename, and removes failed partial uploads. The displayed original filename has directory components removed. It does not verify the paper's identity, access rights or licence from the uploaded bytes. The paper record retains its DOI and landing-page link. Uploads are not automatically labelled open access.
+
+Missing fields return `422` with `invalid_request`. A false confirmation returns `400` with `upload_confirmation_required`. A missing paper returns `404`. An invalid PDF signature returns `400` with `invalid_pdf`; an oversized file returns `413` with `pdf_too_large`. Storage failure returns `503` with `pdf_upload_failed`. Encrypted, damaged, scanned and over-limit documents fail later during parsing with the existing document error codes.
+
 ## 8. Get Document Status
 
 ```http
@@ -337,6 +376,8 @@ Successful response: `200 OK`
 
 Local file paths and checksums are internal and are not returned to the client.
 
+All document status responses include `source_kind` (`download` or `upload`) and `original_filename` (null for downloads). Uploaded documents have a null `source_url`, `access_type: "unknown"` and null `licence`. Downloaded documents retain their existing source URL and open-access metadata.
+
 The status response also includes `created_at` and `updated_at`. Retrieval failures set both stages to `failed`; parsing failures keep retrieval `completed`. Queued work survives a restart. Interrupted active work returns `processing_interrupted` and needs a retry. Missing documents return `404` with `document_not_found`.
 
 ## 9. Retry Failed Document Processing
@@ -361,7 +402,7 @@ Accepted response: `202 Accepted`
 
 If the document is already processing or completed, the API returns `409 Conflict`.
 
-Retry returns the full document status object with both stages set to `pending`. It removes the previous cached download and partial text, then downloads the same source again.
+Retry returns the full document status object. For downloads, it resets both stages to `pending`, removes the cached download and partial text, then downloads the same source again. For uploads, it keeps the original file, checksum, size and retrieval time, leaves retrieval `completed`, and resets parsing to `pending`. A missing uploaded file returns `409` with `pdf_file_missing`; upload the file as a new document instead. Documents with analysis history cannot be retried to replace their source.
 
 ## 10. List Document Sections
 
@@ -641,6 +682,7 @@ To restore a page after refresh, get document IDs from `GET /api/papers/{paper_i
 | `400 Bad Request` | Request content is invalid |
 | `404 Not Found` | Resource does not exist |
 | `409 Conflict` | Resource state does not allow the operation |
+| `413 Content Too Large` | Uploaded PDF exceeds the size limit |
 | `422 Unprocessable Content` | Request fields failed validation |
 | `502 Bad Gateway` | An external service failed |
 | `503 Service Unavailable` | The paper library is temporarily unavailable |
@@ -662,6 +704,9 @@ To restore a page after refresh, get document IDs from `GET /api/papers/{paper_i
 | `section_not_found` | No | Section does not exist |
 | `unsupported_source_url` | No | Source URL is not supported |
 | `pdf_download_failed` | Yes | PDF retrieval failed |
+| `upload_confirmation_required` | No | User has not confirmed the uploaded paper and permission to process it |
+| `pdf_upload_failed` | Yes | Uploaded PDF could not be saved |
+| `pdf_file_missing` | No | Uploaded file is missing; upload it as a new document |
 | `invalid_pdf` | No | Retrieved file is not a valid PDF |
 | `pdf_text_unavailable` | No | PDF contains no useful extractable text |
 | `pdf_parse_failed` | Yes | PDF parsing failed |
@@ -725,6 +770,6 @@ Deleting a collection removes only the group and its memberships. It keeps paper
 
 ## MVP Access Boundary
 
-The MVP does not include user accounts or public sharing. It accepts only supported open-access PDFs and does not bypass paywalls or access controls.
+The MVP does not include user accounts or public sharing. Automatic retrieval accepts supported open-access sources. Manual uploads need the user's confirmation and are labelled with unknown access rights. Neither path bypasses paywalls or access controls. Starting an analysis sends extracted text to the configured model provider; upload alone does not call that provider.
 
 Multi-paper comparison endpoints are outside this contract. They will be added only after single-paper analysis is stable and evaluated.

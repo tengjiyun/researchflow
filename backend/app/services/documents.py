@@ -1,7 +1,10 @@
 from datetime import datetime, timezone
 from pathlib import Path
+import hashlib
 import sqlite3
 import re
+import tempfile
+from typing import BinaryIO
 
 from fastapi import Request
 
@@ -10,6 +13,7 @@ from app.errors import ApiError
 from app.schemas.documents import DocumentStatus, FullTextSource
 from app.services.library import paper_not_found
 from app.services.pdf_parser import ParsedDocument
+from app.services.pdf_download import MAX_PDF_BYTES
 
 
 def now() -> str:
@@ -56,6 +60,64 @@ class DocumentStore:
             row = db.execute("SELECT * FROM documents WHERE id = ?", (cursor.lastrowid,)).fetchone()
             return DocumentStatus(**dict(row))
 
+    def create_upload(self, paper_id: int, file: BinaryIO, filename: str) -> DocumentStatus:
+        with connect_database(self.database_path) as db:
+            if db.execute('SELECT 1 FROM papers WHERE id=?', (paper_id,)).fetchone() is None:
+                raise paper_not_found()
+        filename = filename.replace('\\', '/').rsplit('/', 1)[-1]
+        filename = ''.join(character for character in filename if character.isprintable()).strip()[:255]
+        temporary = None
+        target = None
+        saved = False
+        try:
+            self.cache_path.mkdir(parents=True, exist_ok=True)
+            digest = hashlib.sha256()
+            size = 0
+            header = b''
+            with tempfile.NamedTemporaryFile(dir=self.cache_path, prefix='upload-', suffix='.part', delete=False) as output:
+                temporary = Path(output.name)
+                while block := file.read(65536):
+                    size += len(block)
+                    if size > MAX_PDF_BYTES:
+                        raise ApiError(status_code=413, code='pdf_too_large',
+                                       message='The PDF exceeds the 25 MiB size limit.', retryable=False)
+                    header += block[:max(0, 5 - len(header))]
+                    digest.update(block)
+                    output.write(block)
+            if header != b'%PDF-':
+                raise ApiError(status_code=400, code='invalid_pdf',
+                               message='The uploaded file is not a PDF.', retryable=False)
+            timestamp = now()
+            with connect_database(self.database_path) as db:
+                db.execute('BEGIN IMMEDIATE')
+                if db.execute('SELECT 1 FROM papers WHERE id=?', (paper_id,)).fetchone() is None:
+                    raise paper_not_found()
+                cursor = db.execute("""INSERT INTO documents
+                    (paper_id, source_kind, original_filename, access_type, file_sha256, file_size_bytes,
+                     retrieval_status, retrieved_at, created_at, updated_at)
+                    VALUES (?, 'upload', ?, 'unknown', ?, ?, 'completed', ?, ?, ?)""",
+                    (paper_id, filename or 'upload.pdf', digest.hexdigest(), size, timestamp, timestamp, timestamp))
+                try:
+                    identifier = cursor.lastrowid
+                    target = self.pdf_path(identifier)
+                    db.execute('UPDATE documents SET local_file_path=? WHERE id=?', (str(target), identifier))
+                    temporary.replace(target)
+                    row = db.execute('SELECT * FROM documents WHERE id=?', (identifier,)).fetchone()
+                    result = DocumentStatus(**dict(row))
+                    db.commit()
+                    saved = True
+                finally:
+                    # Clean up before rollback releases the ID for another upload.
+                    if target is not None and not saved:
+                        target.unlink(missing_ok=True)
+            return result
+        except OSError as exc:
+            raise ApiError(status_code=503, code='pdf_upload_failed',
+                           message='The PDF could not be saved. Retry the upload.', retryable=True) from exc
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
     def retry(self, document_id: int) -> DocumentStatus:
         with connect_database(self.database_path) as db:
             db.execute("BEGIN IMMEDIATE")
@@ -66,14 +128,21 @@ class DocumentStore:
                 raise invalid_state()
             if db.execute("SELECT 1 FROM analysis_runs WHERE document_id=?", (document_id,)).fetchone():
                 raise invalid_state()
-            self.pdf_path(document_id).unlink(missing_ok=True)
+            uploaded = row['source_kind'] == 'upload'
+            if uploaded and not self.pdf_path(document_id).is_file():
+                raise ApiError(status_code=409, code='pdf_file_missing',
+                               message='The uploaded PDF is missing. Upload the file again.', retryable=False)
+            if not uploaded:
+                self.pdf_path(document_id).unlink(missing_ok=True)
             self.pdf_path(document_id).with_suffix(".part").unlink(missing_ok=True)
             db.execute("DELETE FROM sections WHERE document_id = ?", (document_id,))
             db.execute("DELETE FROM document_pages WHERE document_id = ?", (document_id,))
-            db.execute("""UPDATE documents SET retrieval_status='pending', parsing_status='pending',
-                error_code=NULL, error_message=NULL, retrieved_at=NULL, parsed_at=NULL,
-                local_file_path=NULL, file_sha256=NULL, file_size_bytes=NULL, page_count=NULL,
-                updated_at=? WHERE id=?""", (now(), document_id))
+            db.execute("""UPDATE documents SET parsing_status='pending', error_code=NULL,
+                error_message=NULL, parsed_at=NULL, page_count=NULL, updated_at=? WHERE id=?""",
+                (now(), document_id))
+            if not uploaded:
+                db.execute("""UPDATE documents SET retrieval_status='pending', retrieved_at=NULL,
+                    local_file_path=NULL, file_sha256=NULL, file_size_bytes=NULL WHERE id=?""", (document_id,))
             row = db.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone()
             return DocumentStatus(**dict(row))
 
@@ -102,10 +171,15 @@ class DocumentStore:
     def claim_next(self) -> int | None:
         with connect_database(self.database_path) as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT id FROM documents WHERE retrieval_status='pending' ORDER BY id LIMIT 1").fetchone()
+            row = db.execute("""SELECT id FROM documents WHERE retrieval_status='pending'
+                OR (source_kind='upload' AND retrieval_status='completed' AND parsing_status='pending')
+                ORDER BY id LIMIT 1""").fetchone()
             if row is None:
                 return None
-            db.execute("UPDATE documents SET retrieval_status='processing', updated_at=? WHERE id=?", (now(), row["id"]))
+            db.execute("""UPDATE documents SET
+                retrieval_status=CASE WHEN source_kind='download' THEN 'processing' ELSE retrieval_status END,
+                parsing_status=CASE WHEN source_kind='upload' THEN 'processing' ELSE parsing_status END,
+                updated_at=? WHERE id=?""", (now(), row['id']))
             return row["id"]
 
     def downloaded(self, document_id: int, size: int, digest: str):
@@ -150,6 +224,8 @@ class DocumentStore:
         self.pdf_path(document_id).with_suffix(".part").unlink(missing_ok=True)
 
     def recover_interrupted(self):
+        for temporary in self.cache_path.glob('upload-*.part'):
+            temporary.unlink(missing_ok=True)
         for temporary in self.cache_path.glob("*.deleting"):
             match = re.fullmatch(r"([1-9][0-9]*)\.(pdf|part)\.deleting", temporary.name)
             if match is None:

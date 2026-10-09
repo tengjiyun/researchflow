@@ -20,7 +20,13 @@ class DocumentCreate(BaseModel):
     source_url: str = Field(min_length=1, max_length=4096)
 
 
-class DocumentStatus(FullTextSource):
+class DocumentStatus(BaseModel):
+    source_kind: Literal['download', 'upload'] = 'download'
+    original_filename: str | None = None
+    source_url: str | None
+    source_format: Literal['pdf'] = 'pdf'
+    access_type: Literal['open_access', 'unknown'] = 'open_access'
+    licence: str | None = None
     id: int
     paper_id: int
     retrieval_status: State

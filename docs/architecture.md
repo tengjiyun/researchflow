@@ -4,7 +4,7 @@ ResearchFlow uses a client-server architecture. The MVP processes one full paper
 
 ## MVP Boundary
 
-The first implementation accepts legally accessible, machine-readable open-access PDFs. It does not support scanned PDFs, optical character recognition, HTML full text, paywalled access, or multi-paper comparison.
+The first implementation retrieves machine-readable open-access PDFs. Users may also upload a PDF they may process when automatic retrieval fails. Uploads have unknown access rights and no inferred licence. The system does not support scanned PDFs, optical character recognition, HTML full text, bypassing access controls, or multi-paper comparison.
 
 The system must show a clear failure when full text is unavailable or unreadable. It must not use an abstract while presenting the result as full-text analysis.
 
@@ -56,6 +56,8 @@ The paper search service uses OpenAlex to retrieve paper metadata, abstracts, an
 ### PDF Retrieval Service
 
 The retrieval service accepts a selected open-access PDF location. It downloads the file, records the source location, and checks that the response is a supported PDF.
+
+The manual upload endpoint accepts one PDF of at most 25 MiB for a saved paper. It checks the file signature, uses a generated storage filename and creates a separate document record. The user confirms the paper and permission to process it. Upload jobs skip network retrieval and use the same parser and evidence storage. Retrying an upload preserves its original file; retrying a download retrieves its source again.
 
 The service rejects missing, inaccessible, or unsupported sources. It does not bypass access controls.
 
@@ -141,7 +143,7 @@ The local cache stores retrieved PDFs and intermediate parsing results. It also 
 
 Cached papers and secret configuration files must not be committed to Git. Cache location, retention, and deletion rules must be set before implementation.
 
-PDFs currently use `backend/data/pdfs/{document_id}.pdf`, with `PDF_CACHE_PATH` available as an override. They remain until the paper is deleted or its document is retried. File cleanup is coordinated with database deletion and recovered on startup after an interruption. The default cache is ignored by Git.
+PDFs currently use `backend/data/pdfs/{document_id}.pdf`, with `PDF_CACHE_PATH` available as an override. They remain until the paper is deleted; downloads are also replaced on retry. Uploaded originals survive parsing retries. File cleanup is coordinated with database deletion and recovered on startup after an interruption. The default cache is ignored by Git.
 
 ## Full-Text Processing Flow
 
@@ -204,7 +206,7 @@ Every supported finding must be traceable to stored source text. PDF evidence us
 - The system does not bypass paywalls or access controls.
 - Cached PDFs and extracted text stay outside version control.
 
-Analysis sends extracted open-access paper text to OpenRouter and its selected model provider. Only the required chunk text and source identifiers are sent. Keys, local paths, and raw service error bodies must not appear in API responses, database settings, or logs. Public deployment, user accounts, and access controls remain outside this local MVP.
+Analysis sends extracted paper text, including text from uploads, to OpenRouter and its selected model provider. Uploading alone does not call the provider. Only the required chunk text and source identifiers are sent. Keys, local paths, and raw service error bodies must not appear in API responses, database settings, or logs. Public deployment, user accounts, and access controls remain outside this local MVP.
 
 ## Analysis Acceptance Checks
 
