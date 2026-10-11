@@ -8,6 +8,8 @@ import { useState, useEffect } from 'react'
 import { listSavedPapers, deletePaper } from '../api/papers'
 import LoadingSpinner from '../components/LoadingSpinner'
 import ErrorMessage from '../components/ErrorMessage'
+import CollectionsPanel from '../components/CollectionsPanel'
+
 // LibraryPage.jsx 组件
 function LibraryPage({ onSelectPaper }) {
   const [papers, setPapers] = useState([])
@@ -76,7 +78,10 @@ function LibraryPage({ onSelectPaper }) {
   return (
     <div className="library-page">
       <h2>My Research Library</h2>
-
+  
+      {/* 集合管理 */}
+      <CollectionsPanel />
+  
       {/* 错误提示 */}
       {error && <ErrorMessage message={error} />}
 

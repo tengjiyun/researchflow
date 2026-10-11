@@ -26,6 +26,7 @@ import {
 import LoadingSpinner from '../components/LoadingSpinner'
 import ErrorMessage from '../components/ErrorMessage'
 import AnalysisPanel from '../components/AnalysisPanel'
+import PaperCollections from '../components/PaperCollections'
 
 // 轮询间隔：2 秒
 const POLL_INTERVAL_MS = 2000
@@ -382,6 +383,12 @@ function PaperDetailPage({ paperId, onBack }) {
             <p>{paper.abstract}</p>
           </section>
         )}
+
+        {/* 集合归属 */}
+        <PaperCollections paperId={paperId} />
+
+        {/* Full-Text Documents 区块 */}
+        <section className="paper-detail-section"></section>
 
         {/* Full-Text Documents 区块 */}
         <section className="paper-detail-section">
